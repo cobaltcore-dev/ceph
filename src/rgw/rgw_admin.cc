@@ -27,6 +27,7 @@ extern "C" {
 #include "common/errno.h"
 #include "common/safe_io.h"
 #include "common/fault_injector.h"
+#include "common/keyring.h"
 
 #include "include/util.h"
 
@@ -68,6 +69,7 @@ extern "C" {
 #include "rgw_sal_config.h"
 #include "rgw_data_access.h"
 #include "rgw_account.h"
+#include "rgw_kms.h"
 
 #include "services/svc_sync_modules.h"
 #include "services/svc_cls.h"
@@ -1225,6 +1227,7 @@ class StoreDestructor {
 public:
   explicit StoreDestructor(rgw::sal::Driver* _s) : driver(_s) {}
   ~StoreDestructor() {
+    rgw_kms_cleanup(g_ceph_context);
     DriverManager::close_storage(driver);
     rgw_http_client_cleanup();
   }
@@ -3362,6 +3365,7 @@ int main(int argc, const char **argv)
 
   auto cct = rgw_global_init(&defaults, args, CEPH_ENTITY_TYPE_CLIENT,
 			     CODE_ENVIRONMENT_UTILITY, 0);
+  LinuxKeyringSecret::initialize_process_keyring();
   ceph::async::io_context_pool context_pool(cct->_conf->rgw_thread_pool_size);
 
   // for region -> zonegroup conversion (must happen before common_init_finish())
