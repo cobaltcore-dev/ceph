@@ -105,6 +105,38 @@ struct rgw_log_entry {
   rgw_account_id account_id;
   std::string role_id;
 
+  // Keystone scope (optional)
+  struct keystone_scope_t {
+    struct domain_t {
+      std::string id;
+      std::string name;
+    };
+    struct project_t {
+      std::string id;
+      std::string name;
+      domain_t domain;
+    };
+    struct user_t {
+      std::string id;
+      std::string name;
+      domain_t domain;
+    };
+
+    project_t project;
+    user_t user;
+    std::vector<std::string> roles;
+
+    // App credential (optional)
+    struct app_cred_t {
+      std::string id;
+      std::string name;
+      bool restricted;
+    };
+    std::optional<app_cred_t> app_cred;
+  };
+
+  std::optional<keystone_scope_t> keystone_scope;
+
   void encode(bufferlist &bl) const {
     ENCODE_START(15, 5, bl);
     // old object/bucket owner ids, encoded in full in v8

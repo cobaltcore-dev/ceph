@@ -1631,6 +1631,36 @@ options:
   - rgw_enable_ops_log
   - rgw_ops_log_socket_path
   with_legacy: true
+# Keystone scope logging
+- name: rgw_keystone_scope_enabled
+  type: bool
+  level: advanced
+  desc: Enable logging of Keystone scope information in ops log
+  long_desc: When enabled, operations authenticated via Keystone will include project,
+    user, domain, and role information in the ops log. Requires rgw_enable_ops_log
+    to be enabled.
+  default: false
+  services:
+  - rgw
+  with_legacy: true
+- name: rgw_keystone_scope_include_user
+  type: bool
+  level: advanced
+  desc: Include human-readable names in Keystone scope logs
+  long_desc: When false (default), only IDs are logged (privacy-friendly, GDPR compliant).
+    When true, names such as project name, user name, and domain names are also logged.
+  default: false
+  services:
+  - rgw
+  with_legacy: true
+- name: rgw_keystone_scope_include_roles
+  type: bool
+  level: advanced
+  desc: Include role names in Keystone scope logs
+  default: true
+  services:
+  - rgw
+  with_legacy: true
 - name: rgw_usage_log_flush_threshold
   type: int
   level: advanced

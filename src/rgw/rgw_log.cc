@@ -353,6 +353,63 @@ void rgw_format_ops_log_entry(struct rgw_log_entry& entry, Formatter *formatter)
     formatter->close_section();
     formatter->close_section();
   }
+
+  // Keystone scope (if present)
+  if (entry.keystone_scope.has_value()) {
+    const auto& scope = entry.keystone_scope.value();
+    formatter->open_object_section("keystone_scope");
+
+    // Project
+    formatter->open_object_section("project");
+    formatter->dump_string("id", scope.project.id);
+    if (!scope.project.name.empty()) {
+      formatter->dump_string("name", scope.project.name);
+    }
+    formatter->open_object_section("domain");
+    formatter->dump_string("id", scope.project.domain.id);
+    if (!scope.project.domain.name.empty()) {
+      formatter->dump_string("name", scope.project.domain.name);
+    }
+    formatter->close_section(); // domain
+    formatter->close_section(); // project
+
+    // User
+    formatter->open_object_section("user");
+    formatter->dump_string("id", scope.user.id);
+    if (!scope.user.name.empty()) {
+      formatter->dump_string("name", scope.user.name);
+    }
+    formatter->open_object_section("domain");
+    formatter->dump_string("id", scope.user.domain.id);
+    if (!scope.user.domain.name.empty()) {
+      formatter->dump_string("name", scope.user.domain.name);
+    }
+    formatter->close_section(); // domain
+    formatter->close_section(); // user
+
+    // Roles
+    if (!scope.roles.empty()) {
+      formatter->open_array_section("roles");
+      for (const auto& role : scope.roles) {
+        formatter->dump_string("role", role);
+      }
+      formatter->close_section(); // roles
+    }
+
+    // Application credential
+    if (scope.app_cred.has_value()) {
+      formatter->open_object_section("application_credential");
+      formatter->dump_string("id", scope.app_cred->id);
+      if (!scope.app_cred->name.empty()) {
+        formatter->dump_string("name", scope.app_cred->name);
+      }
+      formatter->dump_bool("restricted", scope.app_cred->restricted);
+      formatter->close_section(); // application_credential
+    }
+
+    formatter->close_section(); // keystone_scope
+  }
+
   formatter->close_section();
 }
 

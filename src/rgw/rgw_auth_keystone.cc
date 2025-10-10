@@ -17,6 +17,7 @@
 #include "rgw_common.h"
 #include "rgw_keystone.h"
 #include "rgw_auth_keystone.h"
+#include "rgw_auth_keystone_decorating_applier.h"
 #include "rgw_rest_s3.h"
 #include "rgw_auth_s3.h"
 
@@ -281,9 +282,13 @@ TokenEngine::authenticate(const DoutPrefixProvider* dpp,
   if (t) {
     ldpp_dout(dpp, 20) << "cached token.project.id=" << t->get_project_id()
                    << dendl;
-    auto apl = apl_factory->create_apl_remote(cct, s, get_acl_strategy(*t),
-                                              get_creds_info(*t));
-    return result_t::grant(std::move(apl));
+    // Create inner applier via factory, then decorate with token
+    auto inner = apl_factory->create_apl_remote(cct, s, get_acl_strategy(*t),
+                                                get_creds_info(*t));
+    auto decorated = IdentityApplier::aplptr_t(
+      new rgw::auth::keystone::KeystoneDecoratingApplier(
+        cct, std::move(inner), rgw::keystone::TokenEnvelope(*t)));
+    return result_t::grant(std::move(decorated));
   }
 
   /* We have a service token and a token so we verify the service
@@ -392,9 +397,13 @@ TokenEngine::authenticate(const DoutPrefixProvider* dpp,
                     << ":" << t->get_user_name()
                     << " expires: " << t->get_expires() << dendl;
       token_cache.add(token_id, *t);
-      auto apl = apl_factory->create_apl_remote(cct, s, get_acl_strategy(*t),
-                                                get_creds_info(*t));
-      return result_t::grant(std::move(apl));
+      // Create inner applier via factory, then decorate with token
+      auto inner = apl_factory->create_apl_remote(cct, s, get_acl_strategy(*t),
+                                                  get_creds_info(*t));
+      auto decorated = IdentityApplier::aplptr_t(
+        new rgw::auth::keystone::KeystoneDecoratingApplier(
+          cct, std::move(inner), std::move(*t)));
+      return result_t::grant(std::move(decorated));
     }
   }
 
@@ -759,9 +768,13 @@ rgw::auth::Engine::result_t EC2Engine::authenticate(
                   << ":" << t->get_user_name()
                   << " expires: " << t->get_expires() << dendl;
 
-    auto apl = apl_factory->create_apl_remote(cct, s, get_acl_strategy(*t),
-                                              get_creds_info(*t, accepted_roles.admin, std::string(access_key_id)));
-    return result_t::grant(std::move(apl), completer_factory(secret_key));
+    // Create inner applier via factory, then decorate with token
+    auto inner = apl_factory->create_apl_remote(cct, s, get_acl_strategy(*t),
+                                                get_creds_info(*t, accepted_roles.admin, std::string(access_key_id)));
+    auto decorated = IdentityApplier::aplptr_t(
+      new rgw::auth::keystone::KeystoneDecoratingApplier(
+        cct, std::move(inner), std::move(*t)));
+    return result_t::grant(std::move(decorated), completer_factory(secret_key));
   }
 }
 

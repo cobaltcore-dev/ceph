@@ -368,6 +368,8 @@ set(rgw_a_srcs
   rgw_asio_client.cc
   rgw_asio_frontend.cc
   rgw_auth_keystone.cc
+  rgw_auth_keystone_decorating_applier.cc
+  rgw_auth_keystone_scope.cc
   rgw_client_io.cc
   rgw_file.cc
   rgw_frontend.cc
