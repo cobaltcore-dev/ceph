@@ -936,6 +936,39 @@ void rgw::auth::RemoteApplier::write_ops_log_entry(rgw_log_entry& entry) const
   if (account) {
     entry.account_id = account->id;
   }
+
+  // Populate keystone_scope if keystone_extra present
+  if (info.keystone_extra.has_value()) {
+    const auto& kextra = *info.keystone_extra;
+
+    rgw_log_entry::keystone_scope_t scope;
+
+    // User
+    scope.user.id = kextra.user_id;
+    scope.user.name = kextra.user_name;
+    scope.user.domain.id = kextra.user_domain_id;
+    scope.user.domain.name = kextra.user_domain_name;
+
+    // Project
+    scope.project.id = kextra.project_id;
+    scope.project.name = kextra.project_name;
+    scope.project.domain.id = kextra.project_domain_id;
+    scope.project.domain.name = kextra.project_domain_name;
+
+    // Roles
+    scope.roles = kextra.roles;
+
+    // App credential
+    if (kextra.app_cred_id.has_value()) {
+      rgw_log_entry::keystone_scope_t::app_cred_t app_cred;
+      app_cred.id = *kextra.app_cred_id;
+      app_cred.name = *kextra.app_cred_name;
+      app_cred.restricted = kextra.app_cred_restricted;
+      scope.app_cred = std::move(app_cred);
+    }
+
+    entry.keystone_scope = std::move(scope);
+  }
 }
 
 /* TODO(rzarzynski): we need to handle display_name changes. */

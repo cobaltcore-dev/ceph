@@ -158,6 +158,43 @@ TokenEngine::get_creds_info(const TokenEngine::token_envelope_t& token
     }
   }
 
+  /* Build keystone extra info if ops logging is enabled */
+  std::optional<rgw::auth::KeystoneExtraInfo> keystone_extra;
+
+  if (cct->_conf->rgw_keystone_scope_enabled) {
+    rgw::auth::KeystoneExtraInfo extra;
+
+    // User identity (controlled by include_user flag)
+    if (cct->_conf->rgw_keystone_scope_include_user) {
+      extra.user_id = token.get_user_id();
+      extra.user_name = token.get_user_name();
+      extra.user_domain_id = token.user.domain.id;
+      extra.user_domain_name = token.user.domain.name;
+    }
+
+    // Project/tenant scope (always included if scope logging enabled)
+    extra.project_id = token.get_project_id();
+    extra.project_name = token.get_project_name();
+    extra.project_domain_id = token.project.domain.id;
+    extra.project_domain_name = token.project.domain.name;
+
+    // Roles (controlled by include_roles flag)
+    if (cct->_conf->rgw_keystone_scope_include_roles) {
+      for (const auto& role : token.roles) {
+        extra.roles.push_back(role.name);
+      }
+    }
+
+    // Application credential (if present)
+    if (token.app_cred.has_value()) {
+      extra.app_cred_id = token.app_cred->id;
+      extra.app_cred_name = token.app_cred->name;
+      extra.app_cred_restricted = token.app_cred->restricted;
+    }
+
+    keystone_extra = std::move(extra);
+  }
+
   return auth_info_t {
     /* Suggested account name for the authenticated user. */
     rgw_user(token.get_project_id()),
@@ -169,7 +206,8 @@ TokenEngine::get_creds_info(const TokenEngine::token_envelope_t& token
     level,
     rgw::auth::RemoteApplier::AuthInfo::NO_ACCESS_KEY,
     rgw::auth::RemoteApplier::AuthInfo::NO_SUBUSER,
-    TYPE_KEYSTONE
+    TYPE_KEYSTONE,
+    std::move(keystone_extra)
 };
 }
 
@@ -674,6 +712,43 @@ EC2Engine::get_creds_info(const EC2Engine::token_envelope_t& token,
     }
   }
 
+  /* Build keystone extra info if ops logging is enabled */
+  std::optional<rgw::auth::KeystoneExtraInfo> keystone_extra;
+
+  if (cct->_conf->rgw_keystone_scope_enabled) {
+    rgw::auth::KeystoneExtraInfo extra;
+
+    // User identity (controlled by include_user flag)
+    if (cct->_conf->rgw_keystone_scope_include_user) {
+      extra.user_id = token.get_user_id();
+      extra.user_name = token.get_user_name();
+      extra.user_domain_id = token.user.domain.id;
+      extra.user_domain_name = token.user.domain.name;
+    }
+
+    // Project/tenant scope (always included if scope logging enabled)
+    extra.project_id = token.get_project_id();
+    extra.project_name = token.get_project_name();
+    extra.project_domain_id = token.project.domain.id;
+    extra.project_domain_name = token.project.domain.name;
+
+    // Roles (controlled by include_roles flag)
+    if (cct->_conf->rgw_keystone_scope_include_roles) {
+      for (const auto& role : token.roles) {
+        extra.roles.push_back(role.name);
+      }
+    }
+
+    // Application credential (if present)
+    if (token.app_cred.has_value()) {
+      extra.app_cred_id = token.app_cred->id;
+      extra.app_cred_name = token.app_cred->name;
+      extra.app_cred_restricted = token.app_cred->restricted;
+    }
+
+    keystone_extra = std::move(extra);
+  }
+
   return auth_info_t {
     /* Suggested account name for the authenticated user. */
     rgw_user(token.get_project_id()),
@@ -685,7 +760,8 @@ EC2Engine::get_creds_info(const EC2Engine::token_envelope_t& token,
     level,
     access_key_id,
     rgw::auth::RemoteApplier::AuthInfo::NO_SUBUSER,
-    TYPE_KEYSTONE
+    TYPE_KEYSTONE,
+    std::move(keystone_extra)
   };
 }
 
