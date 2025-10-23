@@ -333,48 +333,7 @@ void rgw_format_ops_log_entry(struct rgw_log_entry& entry, Formatter *formatter)
 
   // Keystone scope information
   if (entry.keystone_scope.has_value()) {
-    formatter->open_object_section("keystone_scope");
-    const auto& ks = *entry.keystone_scope;
-
-    // Project
-    formatter->open_object_section("project");
-    formatter->dump_string("id", ks.project.id);
-    formatter->dump_string("name", ks.project.name);
-    formatter->open_object_section("domain");
-    formatter->dump_string("id", ks.project.domain.id);
-    formatter->dump_string("name", ks.project.domain.name);
-    formatter->close_section(); // domain
-    formatter->close_section(); // project
-
-    // User
-    formatter->open_object_section("user");
-    formatter->dump_string("id", ks.user.id);
-    formatter->dump_string("name", ks.user.name);
-    formatter->open_object_section("domain");
-    formatter->dump_string("id", ks.user.domain.id);
-    formatter->dump_string("name", ks.user.domain.name);
-    formatter->close_section(); // domain
-    formatter->close_section(); // user
-
-    // Roles
-    if (!ks.roles.empty()) {
-      formatter->open_array_section("roles");
-      for (const auto& role : ks.roles) {
-        formatter->dump_string("role", role);
-      }
-      formatter->close_section(); // roles
-    }
-
-    // App credential
-    if (ks.app_cred.has_value()) {
-      formatter->open_object_section("application_credential");
-      formatter->dump_string("id", ks.app_cred->id);
-      formatter->dump_string("name", ks.app_cred->name);
-      formatter->dump_bool("restricted", ks.app_cred->restricted);
-      formatter->close_section(); // application_credential
-    }
-
-    formatter->close_section(); // keystone_scope
+    entry.keystone_scope->dump(formatter);
   }
 
   if (entry.op == "multi_object_delete") {
@@ -780,47 +739,6 @@ void rgw_log_entry::dump(Formatter *f) const
     f->dump_string("role_id", role_id);
   }
   if (keystone_scope.has_value()) {
-    f->open_object_section("keystone_scope");
-    const auto& ks = *keystone_scope;
-
-    // Project
-    f->open_object_section("project");
-    f->dump_string("id", ks.project.id);
-    f->dump_string("name", ks.project.name);
-    f->open_object_section("domain");
-    f->dump_string("id", ks.project.domain.id);
-    f->dump_string("name", ks.project.domain.name);
-    f->close_section(); // domain
-    f->close_section(); // project
-
-    // User
-    f->open_object_section("user");
-    f->dump_string("id", ks.user.id);
-    f->dump_string("name", ks.user.name);
-    f->open_object_section("domain");
-    f->dump_string("id", ks.user.domain.id);
-    f->dump_string("name", ks.user.domain.name);
-    f->close_section(); // domain
-    f->close_section(); // user
-
-    // Roles
-    if (!ks.roles.empty()) {
-      f->open_array_section("roles");
-      for (const auto& role : ks.roles) {
-        f->dump_string("role", role);
-      }
-      f->close_section(); // roles
-    }
-
-    // App credential
-    if (ks.app_cred.has_value()) {
-      f->open_object_section("application_credential");
-      f->dump_string("id", ks.app_cred->id);
-      f->dump_string("name", ks.app_cred->name);
-      f->dump_bool("restricted", ks.app_cred->restricted);
-      f->close_section(); // application_credential
-    }
-
-    f->close_section(); // keystone_scope
+    keystone_scope->dump(f);
   }
 }

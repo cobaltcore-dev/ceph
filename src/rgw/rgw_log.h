@@ -10,6 +10,7 @@
 #include <vector>
 #include <fstream>
 #include "rgw_sal_fwd.h"
+#include "rgw_keystone_scope.h"
 
 class RGWOp;
 
@@ -105,124 +106,8 @@ struct rgw_log_entry {
   rgw_account_id account_id;
   std::string role_id;
 
-  // Keystone scope (optional)
-  struct keystone_scope_t {
-    struct domain_t {
-      std::string id;
-      std::string name;
-
-      void encode(bufferlist &bl) const {
-        ENCODE_START(1, 1, bl);
-        encode(id, bl);
-        encode(name, bl);
-        ENCODE_FINISH(bl);
-      }
-      void decode(bufferlist::const_iterator &p) {
-        DECODE_START(1, p);
-        decode(id, p);
-        decode(name, p);
-        DECODE_FINISH(p);
-      }
-    };
-
-    struct project_t {
-      std::string id;
-      std::string name;
-      domain_t domain;
-
-      void encode(bufferlist &bl) const {
-        ENCODE_START(1, 1, bl);
-        encode(id, bl);
-        encode(name, bl);
-        domain.encode(bl);
-        ENCODE_FINISH(bl);
-      }
-      void decode(bufferlist::const_iterator &p) {
-        DECODE_START(1, p);
-        decode(id, p);
-        decode(name, p);
-        domain.decode(p);
-        DECODE_FINISH(p);
-      }
-    };
-
-    struct user_t {
-      std::string id;
-      std::string name;
-      domain_t domain;
-
-      void encode(bufferlist &bl) const {
-        ENCODE_START(1, 1, bl);
-        encode(id, bl);
-        encode(name, bl);
-        domain.encode(bl);
-        ENCODE_FINISH(bl);
-      }
-      void decode(bufferlist::const_iterator &p) {
-        DECODE_START(1, p);
-        decode(id, p);
-        decode(name, p);
-        domain.decode(p);
-        DECODE_FINISH(p);
-      }
-    };
-
-    struct app_cred_t {
-      std::string id;
-      std::string name;
-      bool restricted;
-
-      void encode(bufferlist &bl) const {
-        ENCODE_START(1, 1, bl);
-        encode(id, bl);
-        encode(name, bl);
-        encode(restricted, bl);
-        ENCODE_FINISH(bl);
-      }
-      void decode(bufferlist::const_iterator &p) {
-        DECODE_START(1, p);
-        decode(id, p);
-        decode(name, p);
-        decode(restricted, p);
-        DECODE_FINISH(p);
-      }
-    };
-
-    project_t project;
-    user_t user;
-    std::vector<std::string> roles;
-    std::optional<app_cred_t> app_cred;
-
-    void encode(bufferlist &bl) const {
-      ENCODE_START(1, 1, bl);
-      project.encode(bl);
-      user.encode(bl);
-      encode(roles, bl);
-      __u8 has_app_cred = app_cred.has_value();
-      encode(has_app_cred, bl);
-      if (has_app_cred) {
-        app_cred->encode(bl);
-      }
-      ENCODE_FINISH(bl);
-    }
-    void decode(bufferlist::const_iterator &p) {
-      DECODE_START(1, p);
-      project.decode(p);
-      user.decode(p);
-      decode(roles, p);
-      __u8 has_app_cred;
-      decode(has_app_cred, p);
-      if (has_app_cred) {
-        app_cred = app_cred_t{};
-        app_cred->decode(p);
-      } else {
-        app_cred = std::nullopt;
-      }
-      DECODE_FINISH(p);
-    }
-  };
-
-  std::optional<keystone_scope_t> keystone_scope;
+  // Keystone scope (optional) - uses unified structure from rgw_keystone_scope.h
+  std::optional<rgw::keystone::ScopeInfo> keystone_scope;
 
   void encode(bufferlist &bl) const {
     ENCODE_START(16, 5, bl);
@@ -346,7 +231,7 @@ struct rgw_log_entry {
       __u8 has_keystone_scope;
       decode(has_keystone_scope, p);
       if (has_keystone_scope) {
-        keystone_scope = keystone_scope_t{};
+        keystone_scope = rgw::keystone::ScopeInfo{};
         keystone_scope->decode(p);
       } else {
         keystone_scope = std::nullopt;

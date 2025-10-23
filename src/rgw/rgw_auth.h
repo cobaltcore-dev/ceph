@@ -15,6 +15,7 @@
 
 #include "rgw_common.h"
 #include "rgw_web_idp.h"
+#include "rgw_keystone_scope.h"
 
 #define RGW_USER_ANON_ID "anonymous"
 
@@ -557,31 +558,6 @@ private:
 std::tuple<bool,bool> implicit_tenants_enabled_for_swift(CephContext * const cct);
 std::tuple<bool,bool> implicit_tenants_enabled_for_s3(CephContext * const cct);
 
-/* Keystone-specific extended identity information for ops logging.
- * This struct carries Keystone authentication scope details from the
- * auth engine to RemoteApplier for ops log emission. */
-struct KeystoneExtraInfo {
-  // User identity
-  std::string user_id;
-  std::string user_name;
-  std::string user_domain_id;
-  std::string user_domain_name;
-
-  // Project/tenant scope
-  std::string project_id;
-  std::string project_name;
-  std::string project_domain_id;
-  std::string project_domain_name;
-
-  // Roles
-  std::vector<std::string> roles;
-
-  // Application Credential (optional)
-  std::optional<std::string> app_cred_id;
-  std::optional<std::string> app_cred_name;
-  bool app_cred_restricted = false;
-};
-
 /* rgw::auth::RemoteApplier targets those authentication engines which don't
  * need to ask the RADOS store while performing the auth process. Instead,
  * they obtain credentials from an external source like Keystone or LDAP.
@@ -601,7 +577,7 @@ public:
     const uint32_t acct_type;
     const std::string access_key_id;
     const std::string subuser;
-    const std::optional<KeystoneExtraInfo> keystone_extra;
+    const std::optional<rgw::keystone::ScopeInfo> keystone_scope;
 
   public:
     enum class acct_privilege_t {
@@ -619,7 +595,7 @@ public:
              const std::string access_key_id,
              const std::string subuser,
              const uint32_t acct_type=TYPE_NONE,
-             std::optional<KeystoneExtraInfo> keystone_extra=std::nullopt)
+             std::optional<rgw::keystone::ScopeInfo> keystone_scope=std::nullopt)
     : acct_user(acct_user),
       acct_name(acct_name),
       perm_mask(perm_mask),
@@ -627,7 +603,7 @@ public:
       acct_type(acct_type),
       access_key_id(access_key_id),
       subuser(subuser),
-      keystone_extra(std::move(keystone_extra)) {
+      keystone_scope(std::move(keystone_scope)) {
     }
   };
 
