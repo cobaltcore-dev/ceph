@@ -78,7 +78,12 @@ private:
       return delay;
     }
     // we don't want to reduce ops' tokens if we've rejected it.
-    read.ops -= fixed_point_rgw_ratelimit;
+    if (read_ops() > 0)
+    {
+      // make sure read.ops always greater or equal than 0
+      // to avoid large budget caused by the case that rate limiter was enabled and read.ops set to 0
+      read.ops -= fixed_point_rgw_ratelimit;
+    }
     return 0;
   }
   int64_t should_rate_limit_write(int64_t ops_limit, int64_t bw_limit)
@@ -96,7 +101,12 @@ private:
     }
 
     // we don't want to reduce ops' tokens if we've rejected it.
-    write.ops -= fixed_point_rgw_ratelimit;
+    if (write_ops() > 0)
+    {
+      // make sure write.ops always greater or equal than 0
+      // to avoid large budget caused by the case that rate limiter was enabled and write.ops set to 0
+      write.ops -= fixed_point_rgw_ratelimit;
+    }
     return 0;
   }
 
