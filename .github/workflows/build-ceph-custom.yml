@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       pr_numbers:
-        description: 'List of Upstream PR numbers (space separated, e.g., "55123 58999")'
+        description: 'List of Upstream PR numbers (space separated, e.g., "62163 59858")'
         required: false
         type: string
       ceph_tag:
@@ -44,18 +44,21 @@ jobs:
       - name: Apply Upstream PRs
         if: "${{ inputs.pr_numbers != '' }}"
         run: |
-          # 1. Add the official Ceph repo as 'upstream'
+          # 1. Clean up old remote to prevent "already exists" error
+          git remote remove upstream 2>/dev/null || true
+          
+          # 2. Add 'upstream' remote
           git remote add upstream https://github.com/ceph/ceph.git
           git fetch upstream
 
-          # 2. Process the PRs
+          # 3. Process the PRs
           PRS="${{ inputs.pr_numbers }}"
           echo "Applying PRs from upstream: $PRS"
           
           for PR in $PRS; do
             echo "Fetching upstream PR #$PR..."
-            # Fetch the PR head from 'upstream' remote into a local branch 'pr-ID'
-            git fetch upstream pull/$PR/head:pr-$PR
+            # Force fetch to overwrite if branch already exists from previous run
+            git fetch -f upstream pull/$PR/head:pr-$PR
             
             echo "Merging PR #$PR..."
             git config user.email "ci-bot@example.com"
@@ -64,7 +67,7 @@ jobs:
             git merge --no-edit pr-$PR
           done
           
-          # 3. REPAIR SUBMODULES (Fixes s3select/opentelemetry errors)
+          # 4. REPAIR SUBMODULES (Fixes s3select/opentelemetry errors)
           echo "Repairing submodules after merge..."
           git submodule sync --recursive
           
