@@ -19,10 +19,10 @@ on:
 jobs:
   build-ceph:
     name: Build Ceph Squid
-    runs-on: self-hosted  # MUST be a large runner (32GB+ RAM recommended)
+    runs-on: self-hosted
     permissions:
       contents: read
-      packages: write  # Required to push to ghcr.io
+      packages: write
 
     steps:
       # --- 1. SETUP & CLEAN ---
@@ -35,29 +35,29 @@ jobs:
 
       - name: Clean Workspace
         run: |
-          echo "Cleaning workspace to ensure no artifacts remain..."
+          echo "Cleaning workspace..."
           git clean -fdx
           git submodule foreach --recursive git clean -fdx
-          git submodule update --init --recursive
+          # Do not update submodules here yet to save time/errors
 
       # --- 2. APPLY PULL REQUESTS ---
       - name: Apply Upstream PRs
         if: "${{ inputs.pr_numbers != '' }}"
         run: |
-          # 1. Clean up old remote to prevent "already exists" error
+          # Disable recursive fetch to prevent premature submodule errors
+          git config --global fetch.recurseSubmodules false
+
+          # 1. Setup Remote
           git remote remove upstream 2>/dev/null || true
-          
-          # 2. Add 'upstream' remote
           git remote add upstream https://github.com/ceph/ceph.git
           git fetch upstream
 
-          # 3. Process the PRs
+          # 2. Process PRs
           PRS="${{ inputs.pr_numbers }}"
           echo "Applying PRs from upstream: $PRS"
           
           for PR in $PRS; do
             echo "Fetching upstream PR #$PR..."
-            # Force fetch prevents errors if branch name was reused
             git fetch -f upstream pull/$PR/head:pr-$PR
             
             echo "Merging PR #$PR..."
@@ -66,39 +66,39 @@ jobs:
             git merge --no-edit pr-$PR
           done
           
-          # 4. REPAIR SUBMODULES (CRITICAL FIX)
+          # 3. REPAIR SUBMODULES (THE NUCLEAR FIX)
           echo "Repairing submodules..."
           
-          # A. Sync URLs first! (Updates .git/config with new URLs from merged .gitmodules)
+          # A. Sync URLs to match the new code
           git submodule sync --recursive
           
-          # B. Aggressively remove problematic submodule artifacts
-          # We remove the directory AND deinit to force a completely fresh clone
+          # B. NUCLEAR CLEAN: Remove internal git metadata for problematic modules
+          # This forces git to treat them as brand new repos, ignoring any 'not our ref' cache
+          rm -rf .git/modules/src/s3select
+          rm -rf .git/modules/src/jaegertracing/opentelemetry-cpp
           rm -rf src/s3select src/jaegertracing/opentelemetry-cpp
+          
+          # C. Deinit to clear config
           git submodule deinit -f src/s3select || true
           git submodule deinit -f src/jaegertracing/opentelemetry-cpp || true
           
-          # C. Update everything forcing a fresh download
+          # D. Fresh Update
+          echo "Updating submodules..."
           git submodule update --init --recursive --force
 
       # --- 3. PATCH BUILD ENVIRONMENT ---
       - name: Patch Builder Script
         run: |
-          # Fixes the CentOS Stream 9 curl-minimal conflict
           sed -i 's/dnf install -y \/usr\/bin\/rpmbuild/dnf install -y --allowerasing \/usr\/bin\/rpmbuild/g' src/script/buildcontainer-setup.sh
 
       # --- 4. COMPILE CEPH ---
       - name: Compile RPMs
         run: |
-          # Dynamic RAM allocation
           CORE_COUNT=$(nproc)
           MEM_GB=$(free -g | awk '/^Mem:/{print $2}')
-          # Rule of thumb: 2GB per core. 
           JOBS=$((MEM_GB / 2))
           [[ $JOBS -lt 2 ]] && JOBS=2
           [[ $JOBS -gt $CORE_COUNT ]] && JOBS=$CORE_COUNT
-          
-          echo "Using NINJAJOBS=$JOBS"
           export NINJAJOBS=$JOBS
 
           ./src/script/build-with-container.py \
@@ -113,53 +113,31 @@ jobs:
       - name: Filter RPMs
         run: |
           mkdir -p staging_rpms
-          # Copy only runtime RPMs. Exclude huge debug/devel/test artifacts.
           find rpmbuild/RPMS -name "*.rpm" \
             ! -name "*debuginfo*" ! -name "*debugsource*" \
             ! -name "*devel*" ! -name "*test*" ! -name "*static*" \
             -exec cp {} staging_rpms/ \;
-            
-          echo "RPMs to be installed:"
-          ls -lh staging_rpms/
 
       # --- 6. GENERATE DOCKERFILE ---
       - name: Generate Dockerfile
         run: |
           cat <<EOF > Dockerfile
           FROM quay.io/centos/centos:stream9
-          
-          # 1. Enable CRB (CodeReady Builder) for deps like lua-devel
-          RUN dnf install -y epel-release && \
-              /usr/bin/crb enable && \
-              dnf makecache
-          
-          # 2. Install Runtime Deps
-          RUN dnf install -y \
-              lvm2 python3 python3-pyyaml libibverbs librdmacm \
-              libicu libaio nss nspr cryptsetup lua-devel \
-              && dnf clean all
-          
-          # 3. Copy Filtered RPMs
+          RUN dnf install -y epel-release && /usr/bin/crb enable && dnf makecache
+          RUN dnf install -y lvm2 python3 python3-pyyaml libibverbs librdmacm \
+              libicu libaio nss nspr cryptsetup lua-devel && dnf clean all
           COPY staging_rpms/*.rpm /tmp/rpms/
-          
-          # 4. Install
-          # We use --skip-broken and disable weak deps to keep it small and safe
           RUN dnf localinstall -y /tmp/rpms/*.rpm --skip-broken --setopt=install_weak_deps=False && \
-              dnf clean all && \
-              rm -rf /tmp/rpms
-          
-          # 5. Setup Dirs
+              dnf clean all && rm -rf /tmp/rpms
           RUN mkdir -p /var/run/ceph /var/lib/ceph /var/log/ceph && \
               chmod 770 /var/run/ceph /var/lib/ceph /var/log/ceph
-          
           ENTRYPOINT ["/usr/bin/ceph"]
           EOF
 
-      # --- 7. PUSH TO GITHUB PACKAGES ---
+      # --- 7. PUSH IMAGE ---
       - name: Lowercase Repo Name
         run: echo "REPO_LOWER=${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
 
-      # Required for docker build-push-action
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
