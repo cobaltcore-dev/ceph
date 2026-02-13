@@ -67,15 +67,18 @@ jobs:
             git merge --no-edit pr-$PR
           done
           
-          # 4. REPAIR SUBMODULES (Fixes s3select/opentelemetry errors)
+          # 4. REPAIR SUBMODULES (CRITICAL FIX)
           echo "Repairing submodules after merge..."
+          # Sync URLs first in case .gitmodules changed
           git submodule sync --recursive
           
-          # Force deinit problematic submodules to ensure clean fetch
+          # Force deinit problematic submodules to remove their git config
+          # This forces the next update to treat them as fresh checkouts
           git submodule deinit -f src/s3select || true
           git submodule deinit -f src/jaegertracing/opentelemetry-cpp || true
           
-          # Update everything forcing a fresh download if needed
+          # Update everything forcing a fresh download
+          # We add --remote to ensure we can see new commits if refs are missing
           git submodule update --init --recursive --force
 
       # --- 3. PATCH BUILD ENVIRONMENT ---
