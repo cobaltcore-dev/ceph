@@ -1,10 +1,10 @@
-name: Build Custom Ceph Image (with PRs)
+name: Build Custom Ceph Image (with Upstream PRs)
 
 on:
   workflow_dispatch:
     inputs:
       pr_numbers:
-        description: 'List of PR numbers to apply (space separated, e.g., "55123 56789")'
+        description: 'List of Upstream PR numbers (space separated, e.g., "55123 58999")'
         required: false
         type: string
       ceph_tag:
@@ -39,27 +39,37 @@ jobs:
           git submodule foreach --recursive git clean -fdx
           git submodule update --init --recursive
 
-      # --- 2. APPLY PULL REQUESTS ---
-      - name: Apply Custom PRs
+      # --- 2. APPLY PULL REQUESTS (FROM UPSTREAM CEPH) ---
+      - name: Apply Upstream PRs
         if: "${{ inputs.pr_numbers != '' }}"
         run: |
+          # 1. Add the official Ceph repo as 'upstream'
+          git remote add upstream https://github.com/ceph/ceph.git
+          git fetch upstream
+
+          # 2. Process the PRs
           PRS="${{ inputs.pr_numbers }}"
-          echo "Applying PRs: $PRS"
+          echo "Applying PRs from upstream: $PRS"
           
           for PR in $PRS; do
-            echo "Fetching PR #$PR..."
-            git fetch origin pull/$PR/head:pr-$PR
+            echo "Fetching upstream PR #$PR..."
+            # Fetch the PR head from 'upstream' remote into a local branch 'pr-ID'
+            git fetch upstream pull/$PR/head:pr-$PR
             
             echo "Merging PR #$PR..."
             git config user.email "ci-bot@example.com"
             git config user.name "CI Bot"
+            # Merge the local branch we just created
             git merge --no-edit pr-$PR
           done
+          
+          # 3. Update submodules (crucial if PR touches them)
           git submodule update --init --recursive
 
-      # --- 3. PATCH BUILDER ---
+      # --- 3. PATCH BUILD ENVIRONMENT ---
       - name: Patch Builder Script
         run: |
+          # Fixes the CentOS Stream 9 curl-minimal conflict
           sed -i 's/dnf install -y \/usr\/bin\/rpmbuild/dnf install -y --allowerasing \/usr\/bin\/rpmbuild/g' src/script/buildcontainer-setup.sh
 
       # --- 4. COMPILE CEPH ---
@@ -81,28 +91,48 @@ jobs:
             -DENABLE_LTO=OFF \
             -DWITH_TESTS=OFF
 
-      # --- 5. OPTIMIZE (SLIM) ---
+      # --- 5. OPTIMIZE (SLIM DOWN) ---
       - name: Filter RPMs
         run: |
           mkdir -p staging_rpms
+          # Copy only runtime RPMs. Exclude huge debug/devel/test artifacts.
           find rpmbuild/RPMS -name "*.rpm" \
             ! -name "*debuginfo*" ! -name "*debugsource*" \
             ! -name "*devel*" ! -name "*test*" ! -name "*static*" \
             -exec cp {} staging_rpms/ \;
+            
+          echo "RPMs to be installed:"
+          ls -lh staging_rpms/
 
       # --- 6. GENERATE DOCKERFILE ---
       - name: Generate Dockerfile
         run: |
           cat <<EOF > Dockerfile
           FROM quay.io/centos/centos:stream9
-          RUN dnf install -y epel-release && /usr/bin/crb enable && dnf makecache
-          RUN dnf install -y lvm2 python3 python3-pyyaml libibverbs librdmacm \
-              libicu libaio nss nspr cryptsetup lua-devel && dnf clean all
+          
+          # 1. Enable CRB (CodeReady Builder) for deps like lua-devel
+          RUN dnf install -y epel-release && \
+              /usr/bin/crb enable && \
+              dnf makecache
+          
+          # 2. Install Runtime Deps
+          RUN dnf install -y \
+              lvm2 python3 python3-pyyaml libibverbs librdmacm \
+              libicu libaio nss nspr cryptsetup lua-devel \
+              && dnf clean all
+          
+          # 3. Copy Filtered RPMs
           COPY staging_rpms/*.rpm /tmp/rpms/
+          
+          # 4. Install
           RUN dnf localinstall -y /tmp/rpms/*.rpm --skip-broken --setopt=install_weak_deps=False && \
-              dnf clean all && rm -rf /tmp/rpms
+              dnf clean all && \
+              rm -rf /tmp/rpms
+          
+          # 5. Setup Dirs
           RUN mkdir -p /var/run/ceph /var/lib/ceph /var/log/ceph && \
               chmod 770 /var/run/ceph /var/lib/ceph /var/log/ceph
+          
           ENTRYPOINT ["/usr/bin/ceph"]
           EOF
 
@@ -128,3 +158,4 @@ jobs:
           tags: |
             ghcr.io/${{ env.REPO_LOWER }}:${{ inputs.ceph_tag }}
             ghcr.io/${{ env.REPO_LOWER }}:latest
+            
