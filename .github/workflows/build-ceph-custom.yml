@@ -35,6 +35,7 @@ jobs:
 
       - name: Clean Workspace
         run: |
+          echo "Cleaning workspace to ensure no artifacts remain..."
           git clean -fdx
           git submodule foreach --recursive git clean -fdx
           git submodule update --init --recursive
@@ -63,8 +64,16 @@ jobs:
             git merge --no-edit pr-$PR
           done
           
-          # 3. Update submodules (crucial if PR touches them)
-          git submodule update --init --recursive
+          # 3. REPAIR SUBMODULES (Fixes s3select/opentelemetry errors)
+          echo "Repairing submodules after merge..."
+          git submodule sync --recursive
+          
+          # Force deinit problematic submodules to ensure clean fetch
+          git submodule deinit -f src/s3select || true
+          git submodule deinit -f src/jaegertracing/opentelemetry-cpp || true
+          
+          # Update everything forcing a fresh download if needed
+          git submodule update --init --recursive --force
 
       # --- 3. PATCH BUILD ENVIRONMENT ---
       - name: Patch Builder Script
@@ -75,12 +84,15 @@ jobs:
       # --- 4. COMPILE CEPH ---
       - name: Compile RPMs
         run: |
-          # Dynamic RAM allocation
+          # Dynamic RAM allocation to prevent OOM
           CORE_COUNT=$(nproc)
           MEM_GB=$(free -g | awk '/^Mem:/{print $2}')
+          # Rule of thumb: 2GB per core. 
           JOBS=$((MEM_GB / 2))
           [[ $JOBS -lt 2 ]] && JOBS=2
           [[ $JOBS -gt $CORE_COUNT ]] && JOBS=$CORE_COUNT
+          
+          echo "Using NINJAJOBS=$JOBS"
           export NINJAJOBS=$JOBS
 
           ./src/script/build-with-container.py \
@@ -125,6 +137,7 @@ jobs:
           COPY staging_rpms/*.rpm /tmp/rpms/
           
           # 4. Install
+          # We use --skip-broken and disable weak deps to keep it small and safe
           RUN dnf localinstall -y /tmp/rpms/*.rpm --skip-broken --setopt=install_weak_deps=False && \
               dnf clean all && \
               rm -rf /tmp/rpms
