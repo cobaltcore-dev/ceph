@@ -1,14 +1,18 @@
-name: Build Custom Ceph Image (with PRs)
+name: Build Ceph CobaltCore (Squid)
 
 on:
   workflow_dispatch:
     inputs:
-      pr_numbers:
-        description: 'List of PR numbers to apply (space separated, e.g., "55123 56789")'
+      cherry_pick_commits:
+        description: 'List of Commit Hashes to cherry-pick (space separated, e.g., "a1b2c3d e4f5g6h")'
         required: false
         type: string
-      ceph_tag:
-        description: 'Base Ceph Version'
+      merge_branches:
+        description: 'List of Branches to merge (space separated, e.g., "my-feature upstream/main")'
+        required: false
+        type: string
+      base_branch:
+        description: 'Base branch to build from'
         required: true
         default: 'squid-cobaltcore'
       push_image:
@@ -18,61 +22,100 @@ on:
 
 jobs:
   build-ceph:
-    name: Build Ceph Squid
-    runs-on: self-hosted  # 64G 32cpu
+    name: Build Ceph
+    runs-on: self-hosted  # Must have Podman/Docker installed
     permissions:
       contents: read
-      packages: write  # Required to push to ghcr.io
+      packages: write
 
     steps:
-      # --- 1. SETUP & CLEAN ---
-      - name: Checkout Code
+      # --- 1. CHECKOUT & PREPARE ---
+      - name: Checkout CobaltCore Ceph
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ceph_tag }}
+          repository: cobaltcore-dev/ceph
+          ref: ${{ inputs.base_branch }}
           submodules: recursive
-          fetch-depth: 0
+          fetch-depth: 0 # Important for cherry-picking history
 
       - name: Clean Workspace
         run: |
+          echo "Cleaning workspace..."
           git clean -fdx
           git submodule foreach --recursive git clean -fdx
           git submodule update --init --recursive
 
-      # --- 2. APPLY PULL REQUESTS ---
-      - name: Apply Custom PRs
-        if: "${{ inputs.pr_numbers != '' }}"
+      - name: Setup Remotes (Upstream)
         run: |
-          PRS="${{ inputs.pr_numbers }}"
-          echo "Applying PRs: $PRS"
-          
-          for PR in $PRS; do
-            echo "Fetching PR #$PR..."
-            git fetch origin pull/$PR/head:pr-$PR
-            
-            echo "Merging PR #$PR..."
-            git config user.email "ci-bot@example.com"
-            git config user.name "CI Bot"
-            git merge --no-edit pr-$PR
-          done
-          git submodule update --init --recursive
+          # We add upstream so we can cherry-pick commits/branches from official Ceph if needed
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream https://github.com/ceph/ceph.git
+          git fetch upstream
 
-      # --- 3. PATCH BUILDER ---
+      # --- 2. APPLY CUSTOM CHANGES (Cherry-Picks & Merges) ---
+      - name: Apply Cherry-Picks and Merges
+        if: "${{ inputs.cherry_pick_commits != '' || inputs.merge_branches != '' }}"
+        run: |
+          git config user.email "ci-bot@cobaltcore.dev"
+          git config user.name "CobaltCore CI"
+
+          # 1. MERGE BRANCHES (if provided)
+          BRANCHES="${{ inputs.merge_branches }}"
+          if [ ! -z "$BRANCHES" ]; then
+            for BRANCH in $BRANCHES; do
+              echo "--------------------------------"
+              echo "Merging branch: $BRANCH"
+              # Try fetching it from origin first, then upstream
+              if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+                git merge --no-edit "origin/$BRANCH"
+              elif git rev-parse --verify "upstream/$BRANCH" >/dev/null 2>&1; then
+                git merge --no-edit "upstream/$BRANCH"
+              else
+                echo "Error: Branch '$BRANCH' not found in origin or upstream!"
+                exit 1
+              fi
+            done
+          fi
+
+          # 2. CHERRY-PICK COMMITS (if provided)
+          COMMITS="${{ inputs.cherry_pick_commits }}"
+          if [ ! -z "$COMMITS" ]; then
+            for COMMIT in $COMMITS; do
+              echo "--------------------------------"
+              echo "Cherry-picking commit: $COMMIT"
+              # Ensure we have the commit locally
+              if ! git cat-file -t $COMMIT >/dev/null 2>&1; then
+                echo "Fetching commit from upstream in case it is missing..."
+                git fetch upstream $COMMIT
+              fi
+              git cherry-pick $COMMIT
+            done
+          fi
+
+          echo "--------------------------------"
+          echo "Current HEAD is now at:"
+          git log -1 --oneline
+
+      # --- 3. PATCH BUILDER SCRIPT ---
       - name: Patch Builder Script
         run: |
+          # Fixes the CentOS Stream 9 curl-minimal conflict
           sed -i 's/dnf install -y \/usr\/bin\/rpmbuild/dnf install -y --allowerasing \/usr\/bin\/rpmbuild/g' src/script/buildcontainer-setup.sh
 
-      # --- 4. COMPILE CEPH ---
+      # --- 4. COMPILE CEPH (Image-in-Image Build) ---
       - name: Compile RPMs
         run: |
-          # Dynamic RAM allocation
+          # Safe Concurrency
           CORE_COUNT=$(nproc)
           MEM_GB=$(free -g | awk '/^Mem:/{print $2}')
           JOBS=$((MEM_GB / 2))
           [[ $JOBS -lt 2 ]] && JOBS=2
           [[ $JOBS -gt $CORE_COUNT ]] && JOBS=$CORE_COUNT
+          
+          echo "Using NINJAJOBS=$JOBS"
           export NINJAJOBS=$JOBS
 
+          # This script runs the compilation INSIDE a clean container (DinD)
           ./src/script/build-with-container.py \
             -d centos9 \
             -e rpm \
@@ -81,28 +124,48 @@ jobs:
             -DENABLE_LTO=OFF \
             -DWITH_TESTS=OFF
 
-      # --- 5. OPTIMIZE (SLIM) ---
+      # --- 5. OPTIMIZE (SLIM DOWN) ---
       - name: Filter RPMs
         run: |
           mkdir -p staging_rpms
+          # Exclude huge debug/devel artifacts
           find rpmbuild/RPMS -name "*.rpm" \
             ! -name "*debuginfo*" ! -name "*debugsource*" \
             ! -name "*devel*" ! -name "*test*" ! -name "*static*" \
             -exec cp {} staging_rpms/ \;
+            
+          echo "RPMs to be installed:"
+          ls -lh staging_rpms/
 
-      # --- 6. GENERATE DOCKERFILE ---
+      # --- 6. BUILD FINAL IMAGE ---
       - name: Generate Dockerfile
         run: |
           cat <<EOF > Dockerfile
           FROM quay.io/centos/centos:stream9
-          RUN dnf install -y epel-release && /usr/bin/crb enable && dnf makecache
-          RUN dnf install -y lvm2 python3 python3-pyyaml libibverbs librdmacm \
-              libicu libaio nss nspr cryptsetup lua-devel && dnf clean all
+          
+          # Enable CRB for deps like lua-devel
+          RUN dnf install -y epel-release && \
+              /usr/bin/crb enable && \
+              dnf makecache
+          
+          # Install Runtime Deps
+          RUN dnf install -y \
+              lvm2 python3 python3-pyyaml libibverbs librdmacm \
+              libicu libaio nss nspr cryptsetup lua-devel \
+              && dnf clean all
+          
+          # Copy Custom RPMs
           COPY staging_rpms/*.rpm /tmp/rpms/
+          
+          # Install (Skip broken weak deps for size)
           RUN dnf localinstall -y /tmp/rpms/*.rpm --skip-broken --setopt=install_weak_deps=False && \
-              dnf clean all && rm -rf /tmp/rpms
+              dnf clean all && \
+              rm -rf /tmp/rpms
+          
+          # Setup Dirs
           RUN mkdir -p /var/run/ceph /var/lib/ceph /var/log/ceph && \
               chmod 770 /var/run/ceph /var/lib/ceph /var/log/ceph
+          
           ENTRYPOINT ["/usr/bin/ceph"]
           EOF
 
@@ -126,5 +189,6 @@ jobs:
           file: Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ env.REPO_LOWER }}:${{ inputs.ceph_tag }}
+            ghcr.io/${{ env.REPO_LOWER }}:squid-cobaltcore
             ghcr.io/${{ env.REPO_LOWER }}:latest
+            
