@@ -10,7 +10,7 @@ on:
       ceph_tag:
         description: 'Base Ceph Version'
         required: true
-        default: 'v19.2.3'
+        default: 'squid-cobaltcore'
       push_image:
         description: 'Push image to GitHub Packages?'
         type: boolean
@@ -19,7 +19,7 @@ on:
 jobs:
   build-ceph:
     name: Build Ceph Squid
-    runs-on: self-hosted  # MUST be a large runner (32GB+ RAM recommended)
+    runs-on: self-hosted  # 64G 32cpu
     permissions:
       contents: read
       packages: write  # Required to push to ghcr.io
