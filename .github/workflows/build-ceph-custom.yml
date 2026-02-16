@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       cherry_pick_commits:
-        description: 'List of Commit Hashes to cherry-pick (space separated, e.g., "a1b2c3d e4f5g6h")'
+        description: 'List of Commit Hashes to cherry-pick (space separated)'
         required: false
         type: string
       merge_branches:
-        description: 'List of Branches to merge (space separated, e.g., "my-feature upstream/main")'
+        description: 'List of Branches to merge (space separated)'
         required: false
         type: string
       base_branch:
@@ -23,7 +23,7 @@ on:
 jobs:
   build-ceph:
     name: Build Ceph
-    runs-on: self-hosted  # Must have Podman/Docker installed
+    runs-on: self-hosted
     permissions:
       contents: read
       packages: write
@@ -36,7 +36,7 @@ jobs:
           repository: cobaltcore-dev/ceph
           ref: ${{ inputs.base_branch }}
           submodules: recursive
-          fetch-depth: 0 # Important for cherry-picking history
+          fetch-depth: 0
 
       - name: Clean Workspace
         run: |
@@ -47,75 +47,60 @@ jobs:
 
       - name: Setup Remotes (Upstream)
         run: |
-          # We add upstream so we can cherry-pick commits/branches from official Ceph if needed
           git remote remove upstream 2>/dev/null || true
           git remote add upstream https://github.com/ceph/ceph.git
           git fetch upstream
 
-      # --- 2. APPLY CUSTOM CHANGES (Cherry-Picks & Merges) ---
+      # --- 2. APPLY CUSTOM CHANGES ---
       - name: Apply Cherry-Picks and Merges
         if: "${{ inputs.cherry_pick_commits != '' || inputs.merge_branches != '' }}"
         run: |
           git config user.email "ci-bot@cobaltcore.dev"
           git config user.name "CobaltCore CI"
 
-          # 1. MERGE BRANCHES (if provided)
+          # Merge Branches
           BRANCHES="${{ inputs.merge_branches }}"
           if [ ! -z "$BRANCHES" ]; then
             for BRANCH in $BRANCHES; do
-              echo "--------------------------------"
               echo "Merging branch: $BRANCH"
-              # Try fetching it from origin first, then upstream
               if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
                 git merge --no-edit "origin/$BRANCH"
               elif git rev-parse --verify "upstream/$BRANCH" >/dev/null 2>&1; then
                 git merge --no-edit "upstream/$BRANCH"
               else
-                echo "Error: Branch '$BRANCH' not found in origin or upstream!"
+                echo "Error: Branch '$BRANCH' not found!"
                 exit 1
               fi
             done
           fi
 
-          # 2. CHERRY-PICK COMMITS (if provided)
+          # Cherry-Pick Commits
           COMMITS="${{ inputs.cherry_pick_commits }}"
           if [ ! -z "$COMMITS" ]; then
             for COMMIT in $COMMITS; do
-              echo "--------------------------------"
               echo "Cherry-picking commit: $COMMIT"
-              # Ensure we have the commit locally
               if ! git cat-file -t $COMMIT >/dev/null 2>&1; then
-                echo "Fetching commit from upstream in case it is missing..."
                 git fetch upstream $COMMIT
               fi
               git cherry-pick $COMMIT
             done
           fi
 
-          echo "--------------------------------"
-          echo "Current HEAD is now at:"
-          git log -1 --oneline
-
       # --- 3. PATCH BUILDER SCRIPT ---
       - name: Patch Builder Script
         run: |
-          # Fixes the CentOS Stream 9 curl-minimal conflict
           sed -i 's/dnf install -y \/usr\/bin\/rpmbuild/dnf install -y --allowerasing \/usr\/bin\/rpmbuild/g' src/script/buildcontainer-setup.sh
 
-      # --- 4. COMPILE CEPH (Image-in-Image Build) ---
+      # --- 4. COMPILE CEPH ---
       - name: Compile RPMs
         run: |
-          # Safe Concurrency
           CORE_COUNT=$(nproc)
           MEM_GB=$(free -g | awk '/^Mem:/{print $2}')
           JOBS=$((MEM_GB / 2))
           [[ $JOBS -lt 2 ]] && JOBS=2
           [[ $JOBS -gt $CORE_COUNT ]] && JOBS=$CORE_COUNT
-          
-          echo "Using NINJAJOBS=$JOBS"
           export NINJAJOBS=$JOBS
 
-          # This script runs the compilation INSIDE a clean container (DinD)
           ./src/script/build-with-container.py \
             -d centos9 \
             -e rpm \
@@ -127,8 +112,8 @@ jobs:
       # --- 5. OPTIMIZE (SLIM DOWN) ---
       - name: Filter RPMs
         run: |
+          rm -rf staging_rpms
           mkdir -p staging_rpms
-          # Exclude huge debug/devel artifacts
           find rpmbuild/RPMS -name "*.rpm" \
             ! -name "*debuginfo*" ! -name "*debugsource*" \
             ! -name "*devel*" ! -name "*test*" ! -name "*static*" \
@@ -137,63 +122,42 @@ jobs:
           echo "RPMs to be installed:"
           ls -lh staging_rpms/
 
-      # --- 6. BUILD FINAL IMAGE ---
+      # --- 6. BUILD & PUSH (PODMAN NATIVE) ---
       - name: Generate Dockerfile
         run: |
           cat <<EOF > Dockerfile
           FROM quay.io/centos/centos:stream9
-          
-          # Enable CRB for deps like lua-devel
-          RUN dnf install -y epel-release && \
-              /usr/bin/crb enable && \
-              dnf makecache
-          
-          # Install Runtime Deps
-          RUN dnf install -y \
-              lvm2 python3 python3-pyyaml libibverbs librdmacm \
-              libicu libaio nss nspr cryptsetup lua-devel \
-              && dnf clean all
-          
-          # Copy Custom RPMs
+          RUN dnf install -y epel-release && /usr/bin/crb enable && dnf makecache
+          RUN dnf install -y lvm2 python3 python3-pyyaml libibverbs librdmacm \
+              libicu libaio nss nspr cryptsetup lua-devel && dnf clean all
           COPY staging_rpms/*.rpm /tmp/rpms/
-          
-          # Install (Skip broken weak deps for size)
           RUN dnf localinstall -y /tmp/rpms/*.rpm --skip-broken --setopt=install_weak_deps=False && \
-              dnf clean all && \
-              rm -rf /tmp/rpms
-          
-          # Setup Dirs
+              dnf clean all && rm -rf /tmp/rpms
           RUN mkdir -p /var/run/ceph /var/lib/ceph /var/log/ceph && \
               chmod 770 /var/run/ceph /var/lib/ceph /var/log/ceph
-          
           ENTRYPOINT ["/usr/bin/ceph"]
           EOF
 
-# --- 7. PUSH TO GITHUB PACKAGES ---
-      - name: Lowercase Repo Name
+      - name: Set Image Tag
         run: echo "REPO_LOWER=${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
 
-      # buildx is needed
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Build Image (Podman)
+        run: |
+          # Build using native Podman
+          echo "Building image..."
+          podman build -t ghcr.io/${{ env.REPO_LOWER }}:squid-cobaltcore -f Dockerfile .
+          
+          # Tag 'latest' as well
+          podman tag ghcr.io/${{ env.REPO_LOWER }}:squid-cobaltcore ghcr.io/${{ env.REPO_LOWER }}:latest
 
-      - name: Login to GitHub Container Registry
+      - name: Push to GitHub Packages
         if: ${{ inputs.push_image }}
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and Push
-        if: ${{ inputs.push_image }}
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile
-          push: true
-          tags: |
-            ghcr.io/${{ env.REPO_LOWER }}:squid-cobaltcore
-            ghcr.io/${{ env.REPO_LOWER }}:latest
-            
+        run: |
+          echo "Logging into ghcr.io..."
+          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u ${{ github.actor }} --password-stdin
+          
+          echo "Pushing images..."
+          podman push ghcr.io/${{ env.REPO_LOWER }}:squid-cobaltcore
+          podman push ghcr.io/${{ env.REPO_LOWER }}:latest
+          
 
