@@ -169,9 +169,13 @@ jobs:
           ENTRYPOINT ["/usr/bin/ceph"]
           EOF
 
-      # --- 7. PUSH TO GITHUB PACKAGES ---
+# --- 7. PUSH TO GITHUB PACKAGES ---
       - name: Lowercase Repo Name
         run: echo "REPO_LOWER=${GITHUB_REPOSITORY,,}" >> ${GITHUB_ENV}
+
+      # buildx is needed
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to GitHub Container Registry
         if: ${{ inputs.push_image }}
@@ -192,3 +196,4 @@ jobs:
             ghcr.io/${{ env.REPO_LOWER }}:squid-cobaltcore
             ghcr.io/${{ env.REPO_LOWER }}:latest
             
+
