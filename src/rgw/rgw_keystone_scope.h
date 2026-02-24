@@ -10,8 +10,6 @@
 #include "include/buffer.h"
 #include "include/encoding.h"
 
-class CephContext;
-
 namespace ceph {
   class Formatter;
 }
