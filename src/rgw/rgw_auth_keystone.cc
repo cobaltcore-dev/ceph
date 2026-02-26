@@ -148,13 +148,14 @@ TokenEngine::get_creds_info(const TokenEngine::token_envelope_t& token
                            ) const noexcept
 {
   using acct_privilege_t = rgw::auth::RemoteApplier::AuthInfo::acct_privilege_t;
+  std::vector<std::string> role_names;
 
   /* Check whether the user has an admin status. */
   acct_privilege_t level = acct_privilege_t::IS_PLAIN_ACCT;
   for (const auto& role : token.roles) {
+    role_names.push_back(role.name);
     if (role.is_admin && !role.is_reader) {
       level = acct_privilege_t::IS_ADMIN_ACCT;
-      break;
     }
   }
 
@@ -169,8 +170,9 @@ TokenEngine::get_creds_info(const TokenEngine::token_envelope_t& token
     level,
     rgw::auth::RemoteApplier::AuthInfo::NO_ACCESS_KEY,
     rgw::auth::RemoteApplier::AuthInfo::NO_SUBUSER,
-    TYPE_KEYSTONE
-};
+    TYPE_KEYSTONE,
+    std::move(role_names)
+  };
 }
 
 static inline const std::string
@@ -674,6 +676,11 @@ EC2Engine::get_creds_info(const EC2Engine::token_envelope_t& token,
     }
   }
 
+  std::vector<std::string> role_names;
+  for (const auto& role : token.roles) {
+    role_names.push_back(role.name);
+  }
+
   return auth_info_t {
     /* Suggested account name for the authenticated user. */
     rgw_user(token.get_project_id()),
@@ -685,7 +692,8 @@ EC2Engine::get_creds_info(const EC2Engine::token_envelope_t& token,
     level,
     access_key_id,
     rgw::auth::RemoteApplier::AuthInfo::NO_SUBUSER,
-    TYPE_KEYSTONE
+    TYPE_KEYSTONE,
+    std::move(role_names)
   };
 }
 
