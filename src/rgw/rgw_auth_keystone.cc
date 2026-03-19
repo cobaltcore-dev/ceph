@@ -171,7 +171,8 @@ TokenEngine::get_creds_info(const TokenEngine::token_envelope_t& token
     rgw::auth::RemoteApplier::AuthInfo::NO_ACCESS_KEY,
     rgw::auth::RemoteApplier::AuthInfo::NO_SUBUSER,
     TYPE_KEYSTONE,
-    std::move(role_names)
+    std::move(role_names),
+    token.get_user_id()
   };
 }
 
@@ -693,7 +694,8 @@ EC2Engine::get_creds_info(const EC2Engine::token_envelope_t& token,
     access_key_id,
     rgw::auth::RemoteApplier::AuthInfo::NO_SUBUSER,
     TYPE_KEYSTONE,
-    std::move(role_names)
+    std::move(role_names),
+    token.get_user_id()
   };
 }
 
