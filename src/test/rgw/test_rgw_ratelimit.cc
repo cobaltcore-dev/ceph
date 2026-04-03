@@ -7,6 +7,37 @@
 
 using namespace std::chrono_literals;
 
+
+TEST(RGWRateLimitEntry, compute_delay)
+{
+  // Disabled limit returns 0 regardless of the deficit
+  EXPECT_EQ(0, RateLimiterEntry::compute_delay(0, 0, 1));
+  EXPECT_EQ(0, RateLimiterEntry::compute_delay(0, 1, 1));
+  EXPECT_EQ(0, RateLimiterEntry::compute_delay(0, 1000, 1));
+  EXPECT_EQ(0, RateLimiterEntry::compute_delay(0, 1001, 1));
+  EXPECT_EQ(0, RateLimiterEntry::compute_delay(-1, 1000, 1));
+
+  // Zero or negative deficit returns 0 (caller treats as "no delay needed")
+  EXPECT_EQ(0, RateLimiterEntry::compute_delay(1000, 0, 1));
+  EXPECT_EQ(0, RateLimiterEntry::compute_delay(1000, -1, 1));
+  EXPECT_EQ(0, RateLimiterEntry::compute_delay(1000, -1000, 1));
+
+  // Ceil division at interval=1: tokens replenish at `limit` per second
+  EXPECT_EQ(1, RateLimiterEntry::compute_delay(1000, 1, 1));
+  EXPECT_EQ(1, RateLimiterEntry::compute_delay(1000, 1000, 1));
+  EXPECT_EQ(2, RateLimiterEntry::compute_delay(1000, 1001, 1));
+  EXPECT_EQ(2, RateLimiterEntry::compute_delay(1000, 2000, 1));
+  EXPECT_EQ(3, RateLimiterEntry::compute_delay(1000, 2001, 1));
+
+  // Ceil division at interval=100: tokens replenish at `limit` per 100s
+  EXPECT_EQ(0, RateLimiterEntry::compute_delay(10000, 0, 100));
+  EXPECT_EQ(1, RateLimiterEntry::compute_delay(10000, 1, 100));
+  EXPECT_EQ(1, RateLimiterEntry::compute_delay(10000, 100, 100));
+  EXPECT_EQ(2, RateLimiterEntry::compute_delay(10000, 101, 100));
+  EXPECT_EQ(2, RateLimiterEntry::compute_delay(10000, 200, 100));
+  EXPECT_EQ(3, RateLimiterEntry::compute_delay(10000, 201, 100));
+}
+
 TEST(RGWRateLimit, op_limit_not_enabled)
 {
   // info.enabled = false, so no limit
@@ -16,12 +47,14 @@ TEST(RGWRateLimit, op_limit_not_enabled)
   RGWRateLimitInfo info;
   auto time = ceph::coarse_real_clock::now();
   std::string key = "uuser123";
-  bool success = ratelimit.should_rate_limit("PUT", key, time, &info);
-  EXPECT_EQ(false, success);
+  int64_t delay = ratelimit.should_rate_limit("PUT", key, time, &info);
+  EXPECT_EQ(0, delay);
 }
 TEST(RGWRateLimit, reject_op_over_limit)
 {
-  // check that request is being rejected because there are not enough tokens
+  // check that request is being rejected because there are not enough tokens,
+  // and that the returned delay matches the configured interval (default 60s)
+  // when the user is exactly one token short.
   std::atomic_bool replacing;
   std::condition_variable cv;
   RateLimiter ratelimit(replacing, cv);
@@ -30,10 +63,10 @@ TEST(RGWRateLimit, reject_op_over_limit)
   info.max_read_ops = 1;
   auto time = ceph::coarse_real_clock::now();
   std::string key = "uuser123";
-  bool success = ratelimit.should_rate_limit("GET", key, time, &info);
+  int64_t delay = ratelimit.should_rate_limit("GET", key, time, &info);
   time = ceph::coarse_real_clock::now();
-  success = ratelimit.should_rate_limit("GET", key, time, &info);
-  EXPECT_EQ(true, success);
+  delay = ratelimit.should_rate_limit("GET", key, time, &info);
+  EXPECT_EQ(60, delay);
 }
 TEST(RGWRateLimit, accept_op_after_giveback)
 {
@@ -46,11 +79,11 @@ TEST(RGWRateLimit, accept_op_after_giveback)
   info.max_read_ops = 1;
   auto time = ceph::coarse_real_clock::now();
   std::string key = "uuser123";
-  bool success = ratelimit.should_rate_limit("GET", key, time, &info);
-  ratelimit.giveback_tokens("GET", key);
+  int64_t delay = ratelimit.should_rate_limit("GET", key, time, &info);
+  ratelimit.giveback_tokens("GET", key, "", &info);
   time = ceph::coarse_real_clock::now();
-  success = ratelimit.should_rate_limit("GET", key, time, &info);
-  EXPECT_EQ(false, success);
+  delay = ratelimit.should_rate_limit("GET", key, time, &info);
+  EXPECT_EQ(0, delay);
 }
 TEST(RGWRateLimit, accept_op_after_refill)
 {
@@ -63,10 +96,10 @@ TEST(RGWRateLimit, accept_op_after_refill)
   info.max_read_ops = 1;
   auto time = ceph::coarse_real_clock::now();
   std::string key = "uuser123";
-  bool success = ratelimit.should_rate_limit("GET", key, time, &info);
+  int64_t delay = ratelimit.should_rate_limit("GET", key, time, &info);
   time += 61s;
-  success = ratelimit.should_rate_limit("GET", key, time, &info);
-  EXPECT_EQ(false, success);
+  delay = ratelimit.should_rate_limit("GET", key, time, &info);
+  EXPECT_EQ(0, delay);
 }
 TEST(RGWRateLimit, reject_bw_over_limit)
 {
@@ -79,11 +112,11 @@ TEST(RGWRateLimit, reject_bw_over_limit)
   info.max_read_bytes = 1;
   auto time = ceph::coarse_real_clock::now();
   std::string key = "uuser123";
-  bool success = ratelimit.should_rate_limit("GET", key, time, &info);
+  int64_t delay = ratelimit.should_rate_limit("GET", key, time, &info);
   ratelimit.decrease_bytes("GET",key, 2, &info);
   time = ceph::coarse_real_clock::now();
-  success = ratelimit.should_rate_limit("GET", key, time, &info);
-  EXPECT_EQ(true, success);
+  delay = ratelimit.should_rate_limit("GET", key, time, &info);
+  EXPECT_GT(delay, 0);
 }
 TEST(RGWRateLimit, accept_bw)
 {
@@ -96,11 +129,11 @@ TEST(RGWRateLimit, accept_bw)
   info.max_read_bytes = 2;
   auto time = ceph::coarse_real_clock::now();
   std::string key = "uuser123";
-  bool success = ratelimit.should_rate_limit("GET", key, time, &info);
+  int64_t delay = ratelimit.should_rate_limit("GET", key, time, &info);
   ratelimit.decrease_bytes("GET",key, 1, &info);
   time = ceph::coarse_real_clock::now();
-  success = ratelimit.should_rate_limit("GET", key, time, &info);
-  EXPECT_EQ(false, success);
+  delay = ratelimit.should_rate_limit("GET", key, time, &info);
+  EXPECT_EQ(0, delay);
 }
 TEST(RGWRateLimit, check_bw_debt_at_max_120secs)
 {
@@ -113,11 +146,11 @@ TEST(RGWRateLimit, check_bw_debt_at_max_120secs)
   info.max_read_bytes = 2;
   auto time = ceph::coarse_real_clock::now();
   std::string key = "uuser123";
-  bool success = ratelimit.should_rate_limit("GET", key, time, &info);
+  int64_t delay = ratelimit.should_rate_limit("GET", key, time, &info);
   ratelimit.decrease_bytes("GET",key, 100, &info);
   time += 121s;
-  success = ratelimit.should_rate_limit("GET", key, time, &info);
-  EXPECT_EQ(false, success);
+  delay = ratelimit.should_rate_limit("GET", key, time, &info);
+  EXPECT_EQ(0, delay);
 }
 TEST(RGWRateLimit, check_that_bw_limit_not_affect_ops)
 {
@@ -131,11 +164,11 @@ TEST(RGWRateLimit, check_that_bw_limit_not_affect_ops)
   info.max_read_bytes = 100000000;
   auto time = ceph::coarse_real_clock::now();
   std::string key = "uuser123";
-  bool success = ratelimit.should_rate_limit("GET", key, time, &info);
+  int64_t delay = ratelimit.should_rate_limit("GET", key, time, &info);
   ratelimit.decrease_bytes("GET",key, 10000, &info);
   time = ceph::coarse_real_clock::now();
-  success = ratelimit.should_rate_limit("GET", key, time, &info);
-  EXPECT_EQ(true, success);
+  delay = ratelimit.should_rate_limit("GET", key, time, &info);
+  EXPECT_GT(delay, 0);
 }
 TEST(RGWRateLimit, read_limit_does_not_affect_writes)
 {
@@ -149,11 +182,11 @@ TEST(RGWRateLimit, read_limit_does_not_affect_writes)
   info.max_read_bytes = 100000000;
   auto time = ceph::coarse_real_clock::now();
   std::string key = "uuser123";
-  bool success = ratelimit.should_rate_limit("PUT", key, time, &info);
+  int64_t delay = ratelimit.should_rate_limit("PUT", key, time, &info);
   ratelimit.decrease_bytes("PUT",key, 10000, &info);
   time = ceph::coarse_real_clock::now();
-  success = ratelimit.should_rate_limit("PUT", key, time, &info);
-  EXPECT_EQ(false, success);
+  delay = ratelimit.should_rate_limit("PUT", key, time, &info);
+  EXPECT_EQ(0, delay);
 }
 TEST(RGWRateLimit, write_limit_does_not_affect_reads)
 {
@@ -167,11 +200,11 @@ TEST(RGWRateLimit, write_limit_does_not_affect_reads)
   info.max_write_bytes = 100000000;
   auto time = ceph::coarse_real_clock::now();
   std::string key = "uuser123";
-  bool success = ratelimit.should_rate_limit("GET", key, time, &info);
+  int64_t delay = ratelimit.should_rate_limit("GET", key, time, &info);
   ratelimit.decrease_bytes("GET",key, 10000, &info);
   time = ceph::coarse_real_clock::now();
-  success = ratelimit.should_rate_limit("GET", key, time, &info);
-  EXPECT_EQ(false, success);
+  delay = ratelimit.should_rate_limit("GET", key, time, &info);
+  EXPECT_EQ(0, delay);
 }
 
 TEST(RGWRateLimit, allow_unlimited_access)
@@ -184,8 +217,8 @@ TEST(RGWRateLimit, allow_unlimited_access)
   info.enabled = true;
   auto time = ceph::coarse_real_clock::now();
   std::string key = "uuser123";
-  bool success = ratelimit.should_rate_limit("GET", key, time, &info);
-  EXPECT_EQ(false, success);
+  int64_t delay = ratelimit.should_rate_limit("GET", key, time, &info);
+  EXPECT_EQ(0, delay);
 }
 
 TEST(RGWRateLimitGC, NO_GC_AHEAD_OF_TIME)
@@ -231,22 +264,23 @@ TEST(RGWRateLimitEntry, op_limit_not_enabled)
   RateLimiterEntry entry;
   RGWRateLimitInfo info;
   auto time = ceph::coarse_real_clock::now().time_since_epoch();
-  bool success = entry.should_rate_limit(false, &info, time);
-  EXPECT_EQ(false, success);
+  int64_t delay = entry.should_rate_limit(true, &info, time);
+  EXPECT_EQ(0, delay);
 }
 TEST(RGWRateLimitEntry, reject_op_over_limit)
 {
-  // check that request is being rejected because there are not enough tokens
-
+  // check that request is being rejected because there are not enough tokens,
+  // and that the returned delay matches the configured interval (default 60s)
+  // when the user is exactly one token short.
   RGWRateLimitInfo info;
   RateLimiterEntry entry;
   info.enabled = true;
   info.max_read_ops = 1;
   auto time = ceph::coarse_real_clock::now().time_since_epoch();
-  bool success = entry.should_rate_limit(true, &info, time);
+  int64_t delay = entry.should_rate_limit(true, &info, time);
   time = ceph::coarse_real_clock::now().time_since_epoch();
-  success = entry.should_rate_limit(true, &info, time);
-  EXPECT_EQ(true, success);
+  delay = entry.should_rate_limit(true, &info, time);
+  EXPECT_EQ(60, delay);
 }
 TEST(RGWRateLimitEntry, accept_op_after_giveback)
 {
@@ -256,11 +290,11 @@ TEST(RGWRateLimitEntry, accept_op_after_giveback)
   info.enabled = true;
   info.max_read_ops = 1;
   auto time = ceph::coarse_real_clock::now().time_since_epoch();
-  bool success = entry.should_rate_limit(true,  &info, time);
+  int64_t delay = entry.should_rate_limit(true,  &info, time);
   entry.giveback_tokens(true);
   time = ceph::coarse_real_clock::now().time_since_epoch();
-  success = entry.should_rate_limit(true,  &info, time);
-  EXPECT_EQ(false, success);
+  delay = entry.should_rate_limit(true,  &info, time);
+  EXPECT_EQ(0, delay);
 }
 TEST(RGWRateLimitEntry, accept_op_after_refill)
 {
@@ -270,10 +304,10 @@ TEST(RGWRateLimitEntry, accept_op_after_refill)
   info.enabled = true;
   info.max_read_ops = 1;
   auto time = ceph::coarse_real_clock::now().time_since_epoch();
-  bool success = entry.should_rate_limit(true,  &info, time);
+  int64_t delay = entry.should_rate_limit(true,  &info, time);
   time += 61s;
-  success = entry.should_rate_limit(true,  &info, time);
-  EXPECT_EQ(false, success);
+  delay = entry.should_rate_limit(true,  &info, time);
+  EXPECT_EQ(0, delay);
 }
 TEST(RGWRateLimitEntry, reject_bw_over_limit)
 {
@@ -283,11 +317,11 @@ TEST(RGWRateLimitEntry, reject_bw_over_limit)
   info.enabled = true;
   info.max_read_bytes = 1;
   auto time = ceph::coarse_real_clock::now().time_since_epoch();
-  bool success = entry.should_rate_limit(true,  &info, time);
+  int64_t delay = entry.should_rate_limit(true,  &info, time);
   entry.decrease_bytes(true, 2, &info);
   time = ceph::coarse_real_clock::now().time_since_epoch();
-  success = entry.should_rate_limit(true,  &info, time);
-  EXPECT_EQ(true, success);
+  delay = entry.should_rate_limit(true,  &info, time);
+  EXPECT_GT(delay, 0);
 }
 TEST(RGWRateLimitEntry, accept_bw)
 {
@@ -297,11 +331,11 @@ TEST(RGWRateLimitEntry, accept_bw)
   info.enabled = true;
   info.max_read_bytes = 2;
   auto time = ceph::coarse_real_clock::now().time_since_epoch();
-  bool success = entry.should_rate_limit(true,  &info, time);
+  int64_t delay = entry.should_rate_limit(true, &info, time);
   entry.decrease_bytes(true, 1, &info);
   time = ceph::coarse_real_clock::now().time_since_epoch();
-  success = entry.should_rate_limit(true,  &info, time);
-  EXPECT_EQ(false, success);
+  delay = entry.should_rate_limit(true, &info, time);
+  EXPECT_EQ(0, delay);
 }
 TEST(RGWRateLimitEntry, check_bw_debt_at_max_120secs)
 {
@@ -311,11 +345,11 @@ TEST(RGWRateLimitEntry, check_bw_debt_at_max_120secs)
   info.enabled = true;
   info.max_read_bytes = 2;
   auto time = ceph::coarse_real_clock::now().time_since_epoch();
-  bool success = entry.should_rate_limit(true,  &info, time);
+  int64_t delay = entry.should_rate_limit(true, &info, time);
   entry.decrease_bytes(true, 100, &info);
   time += 121s;
-  success = entry.should_rate_limit(true,  &info, time);
-  EXPECT_EQ(false, success);
+  delay = entry.should_rate_limit(true, &info, time);
+  EXPECT_EQ(0, delay);
 }
 TEST(RGWRateLimitEntry, check_that_bw_limit_not_affect_ops)
 {
@@ -326,11 +360,11 @@ TEST(RGWRateLimitEntry, check_that_bw_limit_not_affect_ops)
   info.max_read_ops = 1;
   info.max_read_bytes = 100000000;
   auto time = ceph::coarse_real_clock::now().time_since_epoch();
-  bool success = entry.should_rate_limit(true,  &info, time);
+  int64_t delay = entry.should_rate_limit(true, &info, time);
   entry.decrease_bytes(true, 10000, &info);
   time = ceph::coarse_real_clock::now().time_since_epoch();
-  success = entry.should_rate_limit(true,  &info, time);
-  EXPECT_EQ(true, success);
+  delay = entry.should_rate_limit(true, &info, time);
+  EXPECT_GT(delay, 0);
 }
 TEST(RGWRateLimitEntry, read_limit_does_not_affect_writes)
 {
@@ -341,11 +375,11 @@ TEST(RGWRateLimitEntry, read_limit_does_not_affect_writes)
   info.max_read_ops = 1;
   info.max_read_bytes = 100000000;
   auto time = ceph::coarse_real_clock::now().time_since_epoch();
-  bool success = entry.should_rate_limit(false,  &info, time);
+  int64_t delay = entry.should_rate_limit(false, &info, time);
   entry.decrease_bytes(false, 10000, &info);
   time = ceph::coarse_real_clock::now().time_since_epoch();
-  success = entry.should_rate_limit(false,  &info, time);
-  EXPECT_EQ(false, success);
+  delay = entry.should_rate_limit(false, &info, time);
+  EXPECT_EQ(0, delay);
 }
 TEST(RGWRateLimitEntry, write_limit_does_not_affect_reads)
 {
@@ -357,11 +391,11 @@ TEST(RGWRateLimitEntry, write_limit_does_not_affect_reads)
   info.max_write_bytes = 100000000;
   auto time = ceph::coarse_real_clock::now().time_since_epoch();
   std::string key = "uuser123";
-  bool success = entry.should_rate_limit(true,  &info, time);
+  int64_t delay = entry.should_rate_limit(true, &info, time);
   entry.decrease_bytes(true, 10000, &info);
   time = ceph::coarse_real_clock::now().time_since_epoch();
-  success = entry.should_rate_limit(true,  &info, time);
-  EXPECT_EQ(false, success);
+  delay = entry.should_rate_limit(true, &info, time);
+  EXPECT_EQ(0, delay);
 }
 
 TEST(RGWRateLimitEntry, allow_unlimited_access)
@@ -371,6 +405,6 @@ TEST(RGWRateLimitEntry, allow_unlimited_access)
   RGWRateLimitInfo info;
   info.enabled = true;
   auto time = ceph::coarse_real_clock::now().time_since_epoch();
-  bool success = entry.should_rate_limit(true,  &info, time);
-  EXPECT_EQ(false, success);
+  int64_t delay = entry.should_rate_limit(true, &info, time);
+  EXPECT_EQ(0, delay);
 }
