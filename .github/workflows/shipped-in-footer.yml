@@ -1,0 +1,58 @@
+name: shipped-in-footer
+
+# Triggered when a release/<ver> tag is pushed to the ceph fork. Rewrites the
+# "Shipped in" footer on backport-candidate issues in the tooling + issues
+# repo (design doc §5.4).
+#
+# Cross-repo write: this workflow runs on the ceph fork but mutates issues on
+# the tooling + issues repo. The default GITHUB_TOKEN is scoped to the ceph
+# fork only and CANNOT edit issues on another repo — see design §5.4. You
+# must:
+#   1. Create a fine-scoped PAT on the tooling + issues repo with
+#      `Issues: Read and Write` permission.
+#   2. Save it on the ceph fork as a repo secret named ISSUES_REPO_TOKEN
+#      (Settings → Secrets and variables → Actions).
+# Without that secret the `Update footers` step fails with HTTP 403.
+
+on:
+  push:
+    tags:
+      - "release/**"
+
+jobs:
+  update-footers:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ceph fork
+        uses: actions/checkout@v4
+        with:
+          path: ceph
+          fetch-depth: 0
+
+      - name: Checkout relenor tooling
+        uses: actions/checkout@v4
+        with:
+          # Pin to a specific relenor commit/tag if you want immutable tooling
+          # for this release branch; otherwise tracks main. Replace
+          # `<vendor>/relenor` with the actual org/repo for your instance.
+          repository: <vendor>/relenor
+          path: relenor
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Sync deps
+        working-directory: relenor
+        run: uv sync --frozen
+
+      - name: Update footers
+        working-directory: relenor
+        env:
+          # PAT with issues:write on the tooling + issues repo. The default
+          # GITHUB_TOKEN is intentionally NOT used here — it has no access
+          # to the tooling repo. See header comment for setup.
+          GH_TOKEN: ${{ secrets.ISSUES_REPO_TOKEN }}
+          CEPH_REPO: ${{ github.workspace }}/ceph
+          REF_NAME: ${{ github.ref_name }}
+        run: uv run python release-management/scripts/shipped_in_footer.py --tag="$REF_NAME"

@@ -1,0 +1,86 @@
+name: validate
+# Backport-file and release-branch graph validation for the Ceph downstream
+# fork. Checks out the relenor tooling repo alongside the ceph repo and runs
+# release-management/scripts/validate.py against the latter via --repo.
+
+on:
+  pull_request:
+    paths:
+      - "release-management/**"
+  push:
+    branches:
+      # release/* and effort branches. Effort branches follow the convention
+      # <upstream-major>-<upstream-dot>-<vendor> (e.g. squid-19.2.3-acme).
+      - "release/**"
+      - "squid-**"
+      - "tentacle-**"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Override the upstream base ref for graph validation (e.g. v19.2.3)"
+        required: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ceph fork
+        uses: actions/checkout@v4
+        with:
+          path: ceph
+          fetch-depth: 0
+
+      - name: Checkout relenor tooling
+        uses: actions/checkout@v4
+        with:
+          # Pin to a specific relenor commit/tag if you want immutable tooling
+          # for this release branch; otherwise tracks main. Replace
+          # `<vendor>/relenor` with the actual org/repo for your instance
+          # before installing this workflow on the ceph fork.
+          repository: <vendor>/relenor
+          path: relenor
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Sync deps
+        working-directory: relenor
+        run: uv sync --frozen
+
+      - name: File-level validate
+        working-directory: relenor
+        env:
+          CEPH_REPO: ${{ github.workspace }}/ceph
+        run: uv run python release-management/scripts/validate.py
+
+      - name: Branch-level validate
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        working-directory: relenor
+        env:
+          CEPH_REPO: ${{ github.workspace }}/ceph
+          REF_NAME: ${{ github.ref_name }}
+          BASE_OVERRIDE: ${{ inputs.base }}
+        run: |
+          # Resolution order for the base ref the graph walk starts from:
+          #   1. workflow_dispatch input `base` (manual override).
+          #   2. Parsed from branch name per the documented convention
+          #      <upstream-major>-<upstream-dot>-<vendor>  →  v<upstream-dot>
+          #      (e.g. squid-19.2.3-acme  →  v19.2.3)
+          #   3. Skip silently for release/* tag pushes — those are validated
+          #      by promote.yml at tag-creation time.
+          if [[ "$REF_NAME" == release/* ]]; then
+            echo "release tag push — branch-graph check is not applicable"
+            exit 0
+          fi
+          if [[ -n "$BASE_OVERRIDE" ]]; then
+            base="$BASE_OVERRIDE"
+          elif [[ "$REF_NAME" =~ ^[a-z]+-([0-9]+\.[0-9]+\.[0-9]+)- ]]; then
+            base="v${BASH_REMATCH[1]}"
+          else
+            echo "::error::cannot derive upstream tag from ref '$REF_NAME'; pass workflow_dispatch input 'base' or fix the branch name convention" >&2
+            exit 1
+          fi
+          echo "branch-graph walk: $base..HEAD"
+          uv run python release-management/scripts/validate.py --base="$base"
