@@ -1,68 +1,34 @@
-
-
-
-
 <!--
-  - Please give your pull request a title like
-
-      [component]: [short description]
-
-  - Please use this format for each git commit message:
-
-      [component]: [short description]
-
-      [A longer multiline description]
-
-      Fixes: [ticket URL on tracker.ceph.com, create one if necessary]
-      Signed-off-by: [Your Name] <[your email]>
-
-    For examples, use "git log".
+Backport PR checklist. CI runs `just validate` and enforces what matters; this
+is a reminder for the author.
 -->
 
-## Contribution Guidelines
-- To sign and title your commits, please refer to [Submitting Patches to Ceph](https://github.com/ceph/ceph/blob/main/SubmittingPatches.rst).
+<!--
+Cross-repo `Closes` — the backport-candidate issue lives in the
+tooling + issues repo, not on this ceph fork. Fill in the org/repo
+your instance uses; the example below assumes cobaltcore-dev.
 
-- If you are submitting a fix for a stable branch (e.g. "quincy"), please refer to [Submitting Patches to Ceph - Backports](https://github.com/ceph/ceph/blob/master/SubmittingPatches-backports.rst) for the proper workflow.
+GitHub's auto-close only fires if you have write on both repos.
+`just merge-backport` will close the linked issue via the API on a
+successful merge regardless of whether auto-close fires, so this
+line's purpose is visual linkage + audit trail.
+-->
+Closes cobaltcore-dev/cloud-storage#<!-- backport candidate issue number -->
 
-- When filling out the below checklist, you may click boxes directly in the GitHub web UI.  When entering or editing the entire PR message in the GitHub web UI editor, you may also select a checklist item by adding an `x` between the brackets: `[x]`.  Spaces and capitalization matter when checking off items this way.
+## Backport file
 
-## Checklist
-- Tracker (select at least one)
-  - [ ] References tracker ticket
-  - [ ] Very recent bug; references commit where it was introduced
-  - [ ] New feature (ticket optional)
-  - [ ] Doc update (no ticket needed)
-  - [ ] Code cleanup (no ticket needed)
-- Component impact
-  - [ ] Affects [Dashboard](https://tracker.ceph.com/projects/dashboard/issues/new), opened tracker ticket
-  - [ ] Affects [Orchestrator](https://tracker.ceph.com/projects/orchestrator/issues/new), opened tracker ticket
-  - [ ] No impact that needs to be tracked
-- Documentation (select at least one)
-  - [ ] Updates relevant documentation
-  - [ ] No doc update is appropriate
-- Tests (select at least one)
-  - [ ] Includes [unit test(s)](https://docs.ceph.com/en/latest/dev/developer_guide/tests-unit-tests/)
-  - [ ] Includes [integration test(s)](https://docs.ceph.com/en/latest/dev/developer_guide/testing_integration_tests/)
-  - [ ] Includes bug reproducer
-  - [ ] No tests
+- [ ] `release-management/backports/<uuid>.md` added (or updated) by this PR
+- [ ] `id` in frontmatter matches the filename stem
+- [ ] `provenance.upstream_prs` set (or `provenance.type: other` with an `other:` block)
 
-<details>
-<summary>Show available Jenkins commands</summary>
+## Stage-B risk (filled per `release-management/backports/RISK-RUBRIC.md`)
 
-- `jenkins test classic perf` [Jenkins Job](https://jenkins.ceph.com/view/all/job/ceph-perf-classic/) | [Jenkins Job Definition](https://github.com/ceph/ceph-build/blob/main/ceph-perf-pull-requests/config/definitions/ceph-perf-pull-requests.yml)
-- `jenkins test crimson perf` [Jenkins Job](https://jenkins.ceph.com/view/all/job/ceph-perf-crimson/) | [Jenkins Job Definition](https://github.com/ceph/ceph-build/blob/main/ceph-perf-pull-requests/config/definitions/ceph-perf-pull-requests.yml)
-- `jenkins test signed` [Jenkins Job](https://jenkins.ceph.com/job/ceph-pr-commits/) | [Jenkins Job Definition](https://github.com/ceph/ceph-build/blob/main/ceph-pr-commits/config/definitions/ceph-pr-commits.yml)
-- `jenkins test make check` [Jenkins Job](https://jenkins.ceph.com/job/ceph-pull-requests/) | [Jenkins Job Definition](https://github.com/ceph/ceph-build/blob/main/ceph-pull-requests/config/definitions/ceph-pull-requests.yml)
-- `jenkins test make check arm64` [Jenkins Job](https://jenkins.ceph.com/job/ceph-pull-requests-arm64/) | [Jenkins Job Definition](https://github.com/ceph/ceph-build/blob/main/ceph-pull-requests-arm64/config/definitions/ceph-pull-requests-arm64.yml)
-- `jenkins test submodules` [Jenkins Job](https://jenkins.ceph.com/view/all/job/ceph-pr-submodules/) | [Jenkins Job Definition](https://github.com/ceph/ceph-build/blob/main/ceph-pr-submodules/config/definitions/ceph-pr-commits.yml)
-- `jenkins test dashboard` [Jenkins Job](https://jenkins.ceph.com/view/all/job/ceph-dashboard-pull-requests/) | [Jenkins Job Definition](https://github.com/ceph/ceph-build/blob/main/ceph-dashboard-pull-requests/config/definitions/ceph-dashboard-pull-requests.yml)
-- `jenkins test dashboard cephadm` [Jenkins Job](https://jenkins.ceph.com/view/all/job/ceph-dashboard-cephadm-e2e/) | [Jenkins Job Definition](https://github.com/ceph/ceph-build/blob/main/ceph-dashboard-cephadm-e2e/config/definitions/ceph-dashboard-cephadm-e2e.yml)
-- `jenkins test api` [Jenkins Job](https://jenkins.ceph.com/view/all/job/ceph-api/) | [Jenkins Job Definition](https://github.com/ceph/ceph-build/blob/main/ceph-pr-api/config/definitions/ceph-pr-api.yml)
-- `jenkins test docs` [ReadTheDocs](https://readthedocs.org/projects/ceph/) | [Github Workflow Definition](https://github.com/ceph/ceph/blob/main/.readthedocs.yml)
-- `jenkins test ceph-volume all` [Jenkins Jobs](https://jenkins.ceph.com/view/ceph-volume%20PR/) | [Jenkins Jobs Definition](https://github.com/ceph/ceph-build/blob/main/ceph-volume-cephadm-prs/config/definitions/ceph-volume-pr.yml)
-- `jenkins test windows` [Jenkins Job](https://jenkins.ceph.com/job/ceph-windows-pull-requests/) | [Jenkins Job Definition](https://github.com/ceph/ceph-build/blob/main/ceph-windows-pull-requests/config/definitions/ceph-windows-pull-requests.yml)
-- `jenkins test rook e2e` [Jenkins Job](https://jenkins.ceph.com/view/all/job/ceph-orchestrator-rook-e2e/) | [Jenkins Job Definition](https://github.com/ceph/ceph-build/blob/main/ceph-rook-e2e/config/definitions/ceph-orchestrator-rook-e2e.yml)
+- [ ] `blast` — cosmetic / availability / data-loss
+- [ ] `conflict` — clean / trivial / substantive
+- [ ] `coverage` — strong / partial / weak
+- [ ] Risk-notes paragraph in the prose section (required for `high` band)
 
-You must only issue one Jenkins command per-comment. Jenkins does not understand
-comments with more than one command.
-</details>
+## Merge
+
+Land this via `just merge-backport PR=<N>` — do not click the green merge button.
+The just recipe constructs the merge commit's `Backport-Id` trailer.
