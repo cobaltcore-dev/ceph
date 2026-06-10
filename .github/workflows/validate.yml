@@ -33,11 +33,7 @@ jobs:
       - name: Checkout relenor tooling
         uses: actions/checkout@v4
         with:
-          # Pin to a specific relenor commit/tag if you want immutable tooling
-          # for this release branch; otherwise tracks main. Replace
-          # `<vendor>/relenor` with the actual org/repo for your instance
-          # before installing this workflow on the ceph fork.
-          repository: <vendor>/relenor
+          repository: cobaltcore-dev/cloud-storage
           path: relenor
 
       - name: Install uv
