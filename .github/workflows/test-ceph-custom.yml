@@ -1,0 +1,101 @@
+name: Test Ceph CobaltCore Unit Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_branch:
+        description: 'Base branch to test (e.g. squid-19.2.4-cobaltcore-storage)'
+        required: true
+        type: string
+  pull_request:
+    branches:
+      - 'squid-*-cobaltcore-storage'
+
+jobs:
+  test-ceph:
+    name: Run Ceph Unit Tests
+    runs-on: self-hosted
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      contents: read
+
+    steps:
+      # --- 1. CHECKOUT & PREPARE ---
+      - name: Determine ref
+        id: ref
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_BRANCH: ${{ inputs.base_branch }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            printf 'ref=%s\n' "$PR_HEAD_SHA" >> "$GITHUB_OUTPUT"
+          else
+            printf 'ref=%s\n' "$BASE_BRANCH" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout CobaltCore Ceph
+        uses: actions/checkout@v4
+        with:
+          repository: cobaltcore-dev/ceph
+          ref: ${{ steps.ref.outputs.ref }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Clean Workspace
+        run: |
+          echo "Cleaning workspace..."
+          git clean -fdx
+          git submodule foreach --recursive git clean -fdx
+          git submodule update --init --recursive
+
+      # --- 2. COMPUTE PARALLELISM ---
+      - name: Compute build + test parallelism
+        run: |
+          CORE_COUNT=$(nproc)
+          MEM_GB=$(free -g | awk '/^Mem:/{print $2}')
+
+          # Build (ninja): bounded by RAM/2 — linker is the heavy step
+          JOBS=$((MEM_GB / 2))
+          [[ $JOBS -lt 2 ]] && JOBS=2
+          [[ $JOBS -gt $CORE_COUNT ]] && JOBS=$CORE_COUNT
+          echo "NINJAJOBS=$JOBS" >> "$GITHUB_ENV"
+
+          # ctest: bounded by RAM/4 (tests spin up ceph daemons, ~2-4 GB each)
+          # and nproc/2 (upstream's get_processors() default), capped at 32.
+          CPU_HALF=$((CORE_COUNT / 2))
+          MEM_QUARTER=$((MEM_GB / 4))
+          CTP=$CPU_HALF
+          [[ $MEM_QUARTER -lt $CTP ]] && CTP=$MEM_QUARTER
+          [[ $CTP -gt 32 ]] && CTP=32
+          [[ $CTP -lt 2 ]] && CTP=2
+          echo "CTEST_PARALLEL=$CTP" >> "$GITHUB_ENV"
+
+      # --- 3. BUILD CONTAINER + COMPILE TESTS ---
+      - name: Build container image and compile tests
+        run: |
+          ./src/script/build-with-container.py -d jammy \
+            -e build-container -e container -e configure -e buildtests
+
+      # --- 4. RUN UNIT TESTS ---
+      - name: Run ctest
+        run: |
+          ./src/script/build-with-container.py -d jammy -e custom -- \
+            "cd build && ctest --parallel $CTEST_PARALLEL --test-load $NINJAJOBS --output-junit Testing/junit.xml --output-on-failure --no-compress-output --test-output-size-failed 1024000 -T Test"
+
+      # --- 5. PUBLISH RESULTS ---
+      - name: Upload CTest results directory
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-testing-dir
+          path: build/Testing/
+          if-no-files-found: warn
+
+      - name: Upload JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-xml
+          path: build/Testing/junit.xml
+          if-no-files-found: warn
