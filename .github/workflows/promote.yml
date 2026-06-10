@@ -3,13 +3,6 @@ name: promote
 # Triggered when a promote PR merges to a release/effort branch and a
 # release/* tag is created. Re-tags RC artifacts from staging to production
 # registry (NO REBUILD) and creates a GitHub Release.
-#
-# Layout: this workflow runs from the ceph fork but invokes the relenor
-# tooling, so it checks both repos out side-by-side under $GITHUB_WORKSPACE:
-#   <workspace>/ceph/       — the ceph fork (this repo)
-#   <workspace>/relenor/    — the relenor tooling (separate repo)
-# All `uv` invocations run from `relenor/` (where the pyproject is); script
-# args reference the ceph fork via $CEPH_REPO.
 
 on:
   push:
@@ -23,24 +16,16 @@ jobs:
       contents: write
       packages: write
     steps:
-      - name: Checkout ceph fork
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          path: ceph
           fetch-depth: 0
-
-      - name: Checkout relenor tooling
-        uses: actions/checkout@v4
-        with:
-          repository: cobaltcore-dev/cloud-storage
-          path: relenor
 
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
 
       - name: Sync deps
-        working-directory: relenor
+        working-directory: release-management
         run: uv sync --frozen
 
       - name: Read MANIFEST for this release
@@ -52,28 +37,14 @@ jobs:
           version="${REF_NAME#release/}"
           version="${version#*-v}"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          test -f "ceph/release-management/MANIFEST-$version.yaml" || { echo "MANIFEST missing"; exit 1; }
+          test -f "release-management/MANIFEST-$version.yaml" || { echo "MANIFEST missing"; exit 1; }
 
       - name: Verify artifact digests against staging registry
-        working-directory: relenor
+        working-directory: release-management
         env:
           VERSION: ${{ steps.manifest.outputs.version }}
-          CEPH_REPO: ${{ github.workspace }}/ceph
-        run: |
-          # Real implementation: skopeo or `cosign verify`. Foundation
-          # placeholder asserts the manifest is well-formed and that each
-          # artifact has a sha256 digest.
-          uv run python - <<'PY'
-          import os, sys, yaml
-          v = os.environ["VERSION"]
-          m = yaml.safe_load(open(f"{os.environ['CEPH_REPO']}/release-management/MANIFEST-{v}.yaml"))
-          for a in m["release"]["artifacts"]:
-              digest = a.get("digest") or a.get("sha256")
-              if not digest:
-                  print(f"ERROR: artifact missing digest: {a}", file=sys.stderr)
-                  sys.exit(1)
-          print(f"verified {len(m['release']['artifacts'])} artifacts")
-          PY
+          CEPH_REPO: ${{ github.workspace }}
+        run: uv run python scripts/promote_verify.py --version="$VERSION"
 
       - name: Re-tag RC artifacts to production registry
         env:
@@ -85,7 +56,6 @@ jobs:
           # CI-specific and out of scope for the design doc.
 
       - name: Create GitHub Release
-        working-directory: ceph
         env:
           # Same-repo write; the default GITHUB_TOKEN is correct here.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

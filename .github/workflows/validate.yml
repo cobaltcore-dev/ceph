@@ -1,7 +1,7 @@
 name: validate
 # Backport-file and release-branch graph validation for the Ceph downstream
-# fork. Checks out the relenor tooling repo alongside the ceph repo and runs
-# release-management/scripts/validate.py against the latter via --repo.
+# fork. Runs scripts shipped in-tree at release-management/scripts/ — no
+# external repo checkout.
 
 on:
   pull_request:
@@ -24,17 +24,9 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout ceph fork
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          path: ceph
           fetch-depth: 0
-
-      - name: Checkout relenor tooling
-        uses: actions/checkout@v4
-        with:
-          repository: cobaltcore-dev/cloud-storage
-          path: relenor
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -42,20 +34,20 @@ jobs:
           enable-cache: true
 
       - name: Sync deps
-        working-directory: relenor
+        working-directory: release-management
         run: uv sync --frozen
 
       - name: File-level validate
-        working-directory: relenor
+        working-directory: release-management
         env:
-          CEPH_REPO: ${{ github.workspace }}/ceph
-        run: uv run python release-management/scripts/validate.py
+          CEPH_REPO: ${{ github.workspace }}
+        run: uv run python scripts/validate.py
 
       - name: Branch-level validate
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        working-directory: relenor
+        working-directory: release-management
         env:
-          CEPH_REPO: ${{ github.workspace }}/ceph
+          CEPH_REPO: ${{ github.workspace }}
           REF_NAME: ${{ github.ref_name }}
           BASE_OVERRIDE: ${{ inputs.base }}
         run: |
@@ -79,4 +71,4 @@ jobs:
             exit 1
           fi
           echo "branch-graph walk: $base..HEAD"
-          uv run python release-management/scripts/validate.py --base="$base"
+          uv run python scripts/validate.py --base="$base"
