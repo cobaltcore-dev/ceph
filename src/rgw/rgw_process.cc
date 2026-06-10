@@ -264,7 +264,7 @@ int rgw_process_authenticated(RGWHandler_REST * const handler,
           "error: " << rc << dendl;
       } else {
         int script_return_code = 0;
-        rc = rgw::lua::request::execute(s->penv.rest, s->penv.olog.get(), s, op, script, script_return_code);
+        rc = rgw::lua::request::execute(driver, s->penv.rest, s->penv.olog.get(), s, op, script, script_return_code);
         if (rc < 0) {
           ldpp_dout(op, 5) <<
             "WARNING: failed to execute post authorization script. "
