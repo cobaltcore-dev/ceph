@@ -1,0 +1,6 @@
+Binaries were built from 7ae8fa43fe686a59c437fb7a40f35cb5ada9472c. Testing was performed against those binaries. `git diff
+7ae8fa43fe686a59c437fb7a40f35cb5ada9472c 0b421ab853392dd50ae5729b3ecae6c32992a9e7` empty at the time of correction.
+
+Divergence commits.
+commit >0b421ab853392dd50ae5729b3ecae6c32992a9e7
+0b421ab853392dd50ae5729b3ecae6c32992a9e7 Backport: Write Lock Lua Extensions (#6)

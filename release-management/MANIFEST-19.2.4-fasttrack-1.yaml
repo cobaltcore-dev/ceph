@@ -1,0 +1,207 @@
+schema_version: 1
+release:
+  product: cobaltcore-storage
+  upstream_base: '19.2.4'
+  upstream_tag: 'v19.2.4'
+  upstream_commit: '7cc0193a616a3333d22b7762037fa5b73a4d06a6'
+  branch: squid-19.2.4-cobaltcore-storage
+  effort_milestone: squid-19.2.4-cobaltcore-storage
+  downstream_version: 19.2.4-fasttrack-1
+  downstream_tag: release/cobaltcore-storage-v19.2.4-fasttrack-1
+  source_commit: 7ae8fa43fe686a59c437fb7a40f35cb5ada9472c
+  rc_tag: cut/v19.2.4-fasttrack-1-rc1
+  promoted_at: '2026-07-09T09:50:22+00:00'
+  promoted_by: irq0
+  release_record:
+    file: release-management/releases/v19.2.4-fasttrack-1/RELEASE.md
+    test_evidence_dir: release-management/releases/v19.2.4-fasttrack-1/test-evidence/
+  artifacts:
+  - kind: container-image
+    ref: harbor.clyso.com/custom-ceph/ceph/ceph
+    tag: cobaltcore-storage-v19.2.4-fasttrack-1
+    digest: sha256:362537d9d98c78d79e8afeee1481c9607b37c8e229a55abb840abf691e49f885
+  - kind: container-image
+    ref: ghcr.io/cobaltcore-dev/ceph
+    tag: cobaltcore-storage-v19.2.4-fasttrack-1
+    digest: sha256:362537d9d98c78d79e8afeee1481c9607b37c8e229a55abb840abf691e49f885
+backports:
+- id: 019eb08c-159f-7a78-b689-5d37a7d343d0
+  title: KMS Cache
+  component: rgw
+  category: feature
+  provenance:
+    type: upstream_pr
+    upstream_prs:
+    - https://github.com/ceph/ceph/pull/61256
+    upstream_pr_state: merged-main
+    upstream_commits:
+    - 56253c4ae02ecffcf878f5046839991f3e7b0d0e
+    upstream_trackers:
+    - tracker.ceph.com/issues/68524
+  justification:
+    type: customer
+    refs:
+    - cobaltcore-dev/cloud-storage#463
+    - https://github.com/cobaltcore-dev/cloud-storage/issues/125
+    public_summary: 'Adds a secure in-memory cache for SSE-KMS encryption keys retrieved from Barbican
+      (or other KMS backends), eliminating redundant round-trips on repeated access to the same encrypted
+      objects. Uses a new SIEVE-based eviction cache (WebCache) and stores decrypted secrets in the Linux
+      kernel keyring.
+
+      Please refer to the Ceph documentation on how to configure this feature.'
+  risk:
+    blast: data-loss
+    conflict: substantive
+    coverage: partial
+    upstream: merged-main
+    total: 9
+    band: medium
+  risk_notes: '- TTLs mean that a deleted or rotated Barbican key won''t be immediately reflected.
+
+    - New async primitives (async::call_once) and the WebCache are significant new library code shipping
+    for the first time.
+
+    - Cache size tuning and system wide keyring quota adjustment needed for production workloads (refer
+    to the docs).'
+  behavior_change: 'Repeated SSE-KMS access no longer hits the KMS backend on every
+
+    request; decrypted secrets are cached in-memory and in the Linux
+
+    kernel keyring. KMS-cache is ON out of the box.'
+  upgrade_notes: 'Feature flag: rgw_crypt_s3_kms_cache_enabled. Set false to disable caching entirely
+    and revert to per-request KMS lookups.'
+  derived:
+    patch_status: active
+    merge_commit: b1100dddb622f8d03da1b0820e0242004d357510
+    commits:
+    - 0e80bc48cd72d294132164500cf5867a3af63c3f
+    - 1a65d4a7f638fa160ce96be648d19998b533a4ca
+    - dc67eeb79909db49225941fa786a84ba3f257b3d
+    - 417b8a76368640bc72d37faff5697ca291b445d0
+    - 0a79029ba223c23bbcbf809fb6e64998779970fe
+    - 74fecd1d9453efdbfba3faa07954561b6c5a4741
+    - bcaf58f1c4b033bd4ff12d69fd1e11ce75aa2526
+    - 08aabb36e1b534a7d9a8b7481168515c95e2f644
+    - 8a527be09b47a21867c552f64cadc18e5f41f339
+    - d585b23e63d2533688cd2b22f60a5cc0d48c2a80
+    - cefee72aa08370246c49ae79a10c00bc52228e3f
+    - f2e42e8649594bc782c8caa7ceef56204376a0b8
+    - c8ecdd22aa0860951641371f6f3561a89aef75bb
+    - 52bc0234b964a26dedf054bb45d2435c77d3b19b
+    - ce8d261a78d348acffba2e7ad067f6cd3365598b
+    - 46fe994e91cf0518c630453018bbcc91c465f502
+    - d6facbe172af8d15807e11dd44108e41bd544c9d
+    - 509ac112d9afbd82c8027665cb7cb3d8cb4e6ca9
+    - 1bd84b8da4057402304c4c0501a462afd7aa092d
+    - 1dc6521bb719dbf4ed0946f75f930e400e7e8b48
+    - 5fc8f93e869509ffa7c041ad02ea8dee67d6e2fb
+    - fb31517c08c48f39f7367aa8e622f2ba1ff29adc
+    - ec7d1687295efd61f15f40e2bb488dec3c830843
+    - f748a3f4636adedc83a9d69cfb20d93ca0fdc60b
+    - 92d8f18718bc97ab2baeaa0535959af2df53768d
+    - 296971c7e1b4283bc214ec4abd4066f78fee3731
+    - 132f1314dbf55d4ff679fb77f08bffd6ab03a4d3
+    - 55b27b4eb99cdbb6c48f00327bb2682fd1eb7ef8
+- id: 019eb0c0-4142-7fc8-9332-370dc54e89c9
+  title: Add Keystone scope information to ops logging
+  component: rgw
+  category: feature
+  provenance:
+    type: upstream_pr
+    upstream_prs:
+    - https://github.com/ceph/ceph/pull/66111
+    upstream_pr_state: merged-main
+    upstream_commits:
+    - 5d6d51eb55648b2c8c563534de4837c90edad78e
+    upstream_trackers:
+    - https://tracker.ceph.com/issues/73702
+  justification:
+    type: customer
+    refs:
+    - cobaltcore-dev/cloud-storage#464
+    - https://github.com/cobaltcore-dev/cloud-storage/issues/335
+    public_summary: 'Add OpenStack Keystone authentication scope information to RGW operations logs.
+
+
+      It enables audit trails for multi-tenant and compliance-sensitive
+
+      environments, by adding the keystone_scope field (project, user,
+
+      domain, roles, application credentials) to RGW ops logs.'
+  risk:
+    blast: availability
+    conflict: trivial
+    coverage: partial
+    upstream: merged-main
+    total: 7
+    band: medium
+  risk_notes: Scope logging with `rgw_keystone_scope_include_user=true` writes human-readable usernames
+    to ops logs, which may have GDPR / privacy implications.
+  behavior_change: Keystone scope (project, domain, roles) appears in RGW ops logs. This feature is OFF
+    by default.
+  upgrade_notes: '- `rgw_keystone_scope_enabled` - enable Keystone scope in the ops log'
+  derived:
+    patch_status: active
+    merge_commit: 5673fc2ff8f66f98118e66ba5530721f03cf0b31
+    commits:
+    - 02d95fd17c699d90dae3f0c1f3db60b4cdf62c7e
+    - 32423d6012302f75d5bb77610d2c43479251af2f
+    - 984fdb1a60f434ef08b9013098042134c90b8a7d
+- id: 019eb1e8-4991-7231-abf9-77cb82dcb746
+  title: Write Lock Lua Extensions
+  component: rgw
+  category: feature
+  provenance:
+    type: upstream_pr
+    upstream_prs:
+    - https://github.com/ceph/ceph/pull/67219
+    - https://github.com/ceph/ceph/pull/67548
+    - https://github.com/ceph/ceph/pull/66065
+    upstream_pr_state: merged-main
+    upstream_commits:
+    - 4924831fc52b05557d42c68065f8b15a83117ba5
+    - 15a36f1fb286cd3c30df0244fb4dd91dcc644287
+    - cb6a2e99bf7ed01ac5db3e1e24d65fa3979b841f
+    upstream_trackers:
+    - https://tracker.ceph.com/issues/75195
+    - https://tracker.ceph.com/issues/74756
+    - https://tracker.ceph.com/issues/73485
+  justification:
+    type: customer
+    refs:
+    - cobaltcore-dev/cloud-storage#465
+    - https://github.com/cobaltcore-dev/cloud-storage/issues/310
+    public_summary: 'RGW Lua scripting extensions to allow "Write Lock" feature
+
+
+      - New postAuth Lua hook point that runs after authentication / authorization but before the operation
+      executes.
+
+      - Lua scripts can now read bucket tags.
+
+      - Lua scripts can abort request processing.'
+  risk:
+    blast: availability
+    conflict: trivial
+    coverage: partial
+    upstream: merged-main
+    total: 7
+    band: medium
+  risk_notes: The postAuth hook runs on every request. A slow or buggy Lua script will add latency to
+    all S3 operations.
+  behavior_change: 'A new postAuth Lua hook point is available. Scripts can read bucket
+
+    tags and abort request processing. Lua is inactive out of the box (no
+
+    scripts are uploaded by default).'
+  upgrade_notes: No dedicated feature flag; controlled by whether a Lua script is uploaded via radosgw-admin.
+  derived:
+    patch_status: active
+    merge_commit: 0b421ab853392dd50ae5729b3ecae6c32992a9e7
+    commits:
+    - 4600c7bd6de14d996e59a23b62400fc8f5ab3710
+    - ac9943bb84303bf3975bf32cbc87451e67789fbc
+    - 04e6afb71179f388fd80985055cbce613f23e37b
+    - c86cc178a55282d3392d01938a482e5748c365de
+    - e7c174ed3bd13e3729efbc2a1561c4c9b7ee4f8e
+    - 7ae8fa43fe686a59c437fb7a40f35cb5ada9472c
