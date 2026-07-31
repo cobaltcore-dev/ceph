@@ -212,6 +212,10 @@ target_link_libraries(unittest_rgw_iam_policy
   ${CRYPTO_LIBS}
   )
 
+add_executable(unittest_rgw_keystone test_rgw_keystone.cc)
+add_ceph_unittest(unittest_rgw_keystone)
+target_link_libraries(unittest_rgw_keystone ${rgw_libs})
+
 add_executable(unittest_rgw_string test_rgw_string.cc)
 add_ceph_unittest(unittest_rgw_string)
 target_include_directories(unittest_rgw_string

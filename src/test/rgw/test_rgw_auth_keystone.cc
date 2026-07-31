@@ -140,7 +140,7 @@ TEST(KeystoneAclStrategy, SystemReaderAdminGrantsRead)
 {
   rgw::keystone::TokenEnvelope::Role role;
   role.name = "system-reader";
-  role.is_reader = true;
+  role.is_system_reader = true;
   role.is_admin = true;
   std::list<rgw::keystone::TokenEnvelope::Role> roles{role};
 
@@ -155,7 +155,7 @@ TEST(KeystoneAclStrategy, ReaderWithoutAdminDoesNotGrant)
 {
   rgw::keystone::TokenEnvelope::Role role;
   role.name = "reader";
-  role.is_reader = true;
+  role.is_system_reader = true;
   role.is_admin = false;
   std::list<rgw::keystone::TokenEnvelope::Role> roles{role};
 
@@ -170,7 +170,7 @@ TEST(KeystoneAclStrategy, SystemReaderAddsToAclMatchedPerm)
 {
   rgw::keystone::TokenEnvelope::Role role;
   role.name = "system-reader";
-  role.is_reader = true;
+  role.is_system_reader = true;
   role.is_admin = true;
   std::list<rgw::keystone::TokenEnvelope::Role> roles{role};
 
