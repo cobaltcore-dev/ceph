@@ -1,0 +1,302 @@
+name: Build Ceph CobaltCore (Squid)
+
+on:
+  workflow_dispatch:
+    inputs:
+      cherry_pick_commits:
+        description: "Commit hashes to cherry-pick, separated by spaces"
+        required: false
+        type: string
+      merge_branches:
+        description: "Branches to merge, separated by spaces"
+        required: false
+        type: string
+      base_branch:
+        description: "CobaltCore branch to build"
+        required: true
+        default: "squid-cobaltcore"
+        type: string
+      push_image:
+        description: "Push the resulting image to GitHub Packages"
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: ceph-cobaltcore-build-${{ inputs.base_branch }}
+  cancel-in-progress: false
+
+jobs:
+  build-ceph:
+    name: Build Ceph RPMs and image
+    runs-on: self-hosted
+    timeout-minutes: 720
+
+    permissions:
+      contents: read
+      packages: write
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout CobaltCore Ceph
+        uses: actions/checkout@v4
+        with:
+          repository: cobaltcore-dev/ceph
+          ref: ${{ inputs.base_branch }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Clean workspace
+        run: |
+          set -euo pipefail
+
+          echo "Cleaning the source tree and submodules..."
+          git clean -fdx
+          git submodule foreach --recursive git clean -fdx
+          git submodule update --init --recursive
+
+      - name: Configure upstream remote
+        run: |
+          set -euo pipefail
+
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream https://github.com/ceph/ceph.git
+          git config remote.upstream.tagOpt --no-tags
+
+          # Do not fetch all upstream history here. A full fetch can inspect
+          # historical submodule revisions that no longer exist remotely.
+
+      - name: Apply requested branches and commits
+        if: ${{ inputs.merge_branches != '' || inputs.cherry_pick_commits != '' }}
+        env:
+          MERGE_BRANCHES: ${{ inputs.merge_branches }}
+          CHERRY_PICK_COMMITS: ${{ inputs.cherry_pick_commits }}
+        run: |
+          set -euo pipefail
+
+          git config user.email "ci-bot@cobaltcore.dev"
+          git config user.name "CobaltCore CI"
+
+          if [[ -n "${MERGE_BRANCHES}" ]]; then
+            read -r -a branches <<< "${MERGE_BRANCHES}"
+
+            for branch in "${branches[@]}"; do
+              git check-ref-format --branch "${branch}" >/dev/null
+              echo "Merging branch: ${branch}"
+
+              if git ls-remote --exit-code --heads origin "refs/heads/${branch}" >/dev/null 2>&1; then
+                git fetch \
+                  --no-tags \
+                  --recurse-submodules=no \
+                  origin \
+                  "+refs/heads/${branch}:refs/remotes/origin/${branch}"
+                git merge --no-edit "refs/remotes/origin/${branch}"
+                continue
+              fi
+
+              if git ls-remote --exit-code --heads upstream "refs/heads/${branch}" >/dev/null 2>&1; then
+                git fetch \
+                  --no-tags \
+                  --recurse-submodules=no \
+                  upstream \
+                  "+refs/heads/${branch}:refs/remotes/upstream/${branch}"
+                git merge --no-edit "refs/remotes/upstream/${branch}"
+                continue
+              fi
+
+              echo "Error: branch '${branch}' was not found in origin or upstream."
+              exit 1
+            done
+          fi
+
+          if [[ -n "${CHERRY_PICK_COMMITS}" ]]; then
+            read -r -a commits <<< "${CHERRY_PICK_COMMITS}"
+
+            for commit in "${commits[@]}"; do
+              if [[ ! "${commit}" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+                echo "Error: '${commit}' is not a valid abbreviated or full Git commit hash."
+                exit 1
+              fi
+
+              echo "Cherry-picking commit: ${commit}"
+
+              if ! git cat-file -e "${commit}^{commit}" 2>/dev/null; then
+                git fetch \
+                  --no-tags \
+                  --recurse-submodules=no \
+                  upstream \
+                  "${commit}"
+              fi
+
+              git cherry-pick "${commit}"
+            done
+          fi
+
+      - name: Calculate safe build parallelism
+        run: |
+          set -euo pipefail
+
+          cpu_jobs=$(nproc)
+          host_available_kb=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+          effective_available_bytes=$((host_available_kb * 1024))
+
+          if [[ -r /sys/fs/cgroup/memory.max ]]; then
+            cgroup_limit=$(cat /sys/fs/cgroup/memory.max)
+            cgroup_usage=$(cat /sys/fs/cgroup/memory.current)
+
+            if [[ "${cgroup_limit}" =~ ^[0-9]+$ ]] \
+              && (( ${#cgroup_limit} < 18 )) \
+              && (( cgroup_limit > cgroup_usage )); then
+              cgroup_available=$((cgroup_limit - cgroup_usage))
+              if (( cgroup_available < effective_available_bytes )); then
+                effective_available_bytes=${cgroup_available}
+              fi
+            fi
+          elif [[ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]]; then
+            cgroup_limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
+            cgroup_usage=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes)
+
+            if [[ "${cgroup_limit}" =~ ^[0-9]+$ ]] \
+              && (( ${#cgroup_limit} < 18 )) \
+              && (( cgroup_limit > cgroup_usage )); then
+              cgroup_available=$((cgroup_limit - cgroup_usage))
+              if (( cgroup_available < effective_available_bytes )); then
+                effective_available_bytes=${cgroup_available}
+              fi
+            fi
+          fi
+
+          # Keep 2 GiB for the runner and container runtime, then budget 3 GiB
+          # for every concurrent Ceph compilation job.
+          headroom_bytes=$((2 * 1024 * 1024 * 1024))
+          bytes_per_job=$((3 * 1024 * 1024 * 1024))
+
+          if (( effective_available_bytes > headroom_bytes )); then
+            memory_jobs=$(((effective_available_bytes - headroom_bytes) / bytes_per_job))
+          else
+            memory_jobs=1
+          fi
+
+          (( memory_jobs < 1 )) && memory_jobs=1
+
+          jobs=${cpu_jobs}
+          (( memory_jobs < jobs )) && jobs=${memory_jobs}
+          (( jobs < 1 )) && jobs=1
+
+          echo "CPU limit: ${cpu_jobs} jobs"
+          echo "Memory limit: ${memory_jobs} jobs"
+          echo "Selected build parallelism: ${jobs} jobs"
+          echo "BUILD_JOBS=${jobs}" >> "${GITHUB_ENV}"
+
+      - name: Compile RPMs
+        run: |
+          set -euo pipefail
+
+          ./src/script/build-with-container.py \
+            --distro centos9 \
+            --execute rpm \
+            --image-variant packages \
+            --extra=-e \
+            --extra="NPROC=${BUILD_JOBS}" \
+            --extra=-e \
+            --extra="NINJAJOBS=${BUILD_JOBS}"
+
+      - name: Collect runtime RPMs
+        run: |
+          set -euo pipefail
+
+          rm -rf staging_rpms
+          mkdir -p staging_rpms
+
+          find rpmbuild/RPMS -type f -name "*.rpm" \
+            ! -name "*debuginfo*" \
+            ! -name "*debugsource*" \
+            ! -name "*devel*" \
+            ! -name "*test*" \
+            ! -name "*static*" \
+            -exec cp --target-directory=staging_rpms {} +
+
+          shopt -s nullglob
+          rpms=(staging_rpms/*.rpm)
+          if (( ${#rpms[@]} == 0 )); then
+            echo "Error: no runtime RPMs were produced."
+            exit 1
+          fi
+
+          echo "RPMs selected for the runtime image:"
+          ls -lh staging_rpms/
+
+      - name: Generate runtime Containerfile
+        run: |
+          set -euo pipefail
+
+          cat > Containerfile.cobaltcore <<'EOF'
+          FROM quay.io/centos/centos:stream9
+
+          RUN dnf install -y dnf-plugins-core \
+                https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
+              dnf config-manager --set-enabled crb && \
+              dnf makecache
+
+          COPY staging_rpms/*.rpm /tmp/rpms/
+
+          RUN dnf localinstall -y \
+                --setopt=install_weak_deps=False \
+                /tmp/rpms/*.rpm && \
+              dnf clean all && \
+              rm -rf /tmp/rpms
+
+          RUN mkdir -p /var/run/ceph /var/lib/ceph /var/log/ceph && \
+              chmod 0770 /var/run/ceph /var/lib/ceph /var/log/ceph
+
+          ENTRYPOINT ["/usr/bin/ceph"]
+          EOF
+
+      - name: Set image coordinates
+        env:
+          BASE_BRANCH: ${{ inputs.base_branch }}
+        run: |
+          set -euo pipefail
+
+          repository=${GITHUB_REPOSITORY,,}
+          branch_tag=${BASE_BRANCH//\//-}
+          branch_tag=${branch_tag,,}
+
+          echo "IMAGE_REPOSITORY=ghcr.io/${repository}" >> "${GITHUB_ENV}"
+          echo "IMAGE_TAG=${branch_tag}" >> "${GITHUB_ENV}"
+
+      - name: Build runtime image
+        run: |
+          set -euo pipefail
+
+          echo "Building ${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          podman build \
+            --file Containerfile.cobaltcore \
+            --tag "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+            .
+
+          podman tag \
+            "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+            "${IMAGE_REPOSITORY}:latest"
+
+      - name: Push to GitHub Packages
+        if: ${{ inputs.push_image }}
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          echo "${GHCR_TOKEN}" | podman login \
+            --username "${GITHUB_ACTOR}" \
+            --password-stdin \
+            ghcr.io
+
+          podman push "${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          podman push "${IMAGE_REPOSITORY}:latest"
+
+      - name: Log out from GitHub Packages
+        if: ${{ always() && inputs.push_image }}
+        run: podman logout ghcr.io || true
