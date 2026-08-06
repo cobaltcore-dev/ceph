@@ -11,10 +11,10 @@ on:
         description: "Branches to merge, separated by spaces"
         required: false
         type: string
-      base_branch:
-        description: "CobaltCore branch to build"
+      source_ref:
+        description: "CobaltCore branch, tag, or commit SHA to build"
         required: true
-        default: "squid-cobaltcore"
+        default: "squid-19.2.4-cobaltcore-storage"
         type: string
       push_image:
         description: "Push the resulting image to GitHub Packages"
@@ -23,7 +23,9 @@ on:
         type: boolean
 
 concurrency:
-  group: ceph-cobaltcore-build-${{ inputs.base_branch }}
+  # build-with-container.py uses the fixed Podman container name ceph_build.
+  # Serialize all runs of this workflow to prevent name collisions.
+  group: ceph-cobaltcore-builder
   cancel-in-progress: false
 
 jobs:
@@ -45,7 +47,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: cobaltcore-dev/ceph
-          ref: ${{ inputs.base_branch }}
+          ref: ${{ inputs.source_ref }}
           submodules: recursive
           fetch-depth: 0
 
@@ -191,13 +193,28 @@ jobs:
           echo "Selected build parallelism: ${jobs} jobs"
           echo "BUILD_JOBS=${jobs}" >> "${GITHUB_ENV}"
 
+      - name: Remove stale Ceph build container
+        run: |
+          set -euo pipefail
+
+          if podman container exists ceph_build; then
+            echo "Removing stale ceph_build container..."
+            podman ps -a \
+              --filter "name=^ceph_build$" \
+              --format "table {{.ID}}\t{{.Status}}\t{{.Names}}\t{{.Command}}"
+            podman rm -f ceph_build
+          fi
+
       - name: Compile RPMs
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           set -euo pipefail
 
           ./src/script/build-with-container.py \
             --distro centos9 \
             --execute rpm \
+            --current-branch="${SOURCE_REF}" \
             --image-variant packages \
             --rpmbuild-arg=--without \
             --rpmbuild-arg=crimson \
@@ -205,6 +222,10 @@ jobs:
             --extra="NPROC=${BUILD_JOBS}" \
             --extra=-e \
             --extra="NINJAJOBS=${BUILD_JOBS}"
+
+      - name: Clean Ceph build container
+        if: ${{ always() }}
+        run: podman rm -f ceph_build 2>/dev/null || true
 
       - name: Collect runtime RPMs
         run: |
@@ -259,16 +280,17 @@ jobs:
 
       - name: Set image coordinates
         env:
-          BASE_BRANCH: ${{ inputs.base_branch }}
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           set -euo pipefail
 
           repository=${GITHUB_REPOSITORY,,}
-          branch_tag=${BASE_BRANCH//\//-}
-          branch_tag=${branch_tag,,}
+          image_tag=${SOURCE_REF//\//-}
+          image_tag=${image_tag,,}
+          image_tag=$(printf '%s' "${image_tag}" | sed 's/[^a-z0-9._-]/-/g')
 
           echo "IMAGE_REPOSITORY=ghcr.io/${repository}" >> "${GITHUB_ENV}"
-          echo "IMAGE_TAG=${branch_tag}" >> "${GITHUB_ENV}"
+          echo "IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
 
       - name: Build runtime image
         run: |
