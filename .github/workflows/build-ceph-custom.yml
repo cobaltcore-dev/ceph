@@ -199,6 +199,8 @@ jobs:
             --distro centos9 \
             --execute rpm \
             --image-variant packages \
+            --rpmbuild-arg=--without \
+            --rpmbuild-arg=crimson \
             --extra=-e \
             --extra="NPROC=${BUILD_JOBS}" \
             --extra=-e \
