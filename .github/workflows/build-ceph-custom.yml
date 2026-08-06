@@ -94,20 +94,22 @@ jobs:
       # --- 4. COMPILE CEPH ---
       - name: Compile RPMs
         run: |
+          set -euo pipefail
+          
           CORE_COUNT=$(nproc)
           MEM_GB=$(free -g | awk '/^Mem:/{print $2}')
           JOBS=$((MEM_GB / 2))
-          [[ $JOBS -lt 2 ]] && JOBS=2
-          [[ $JOBS -gt $CORE_COUNT ]] && JOBS=$CORE_COUNT
-          export NINJAJOBS=$JOBS
+
+          [[ ${JOBS} -lt 2 ]] && JOBS=2
+          [[ ${JOBS} -gt ${CORE_COUNT} ]] && JOBS=${CORE_COUNT}
+
+          export NINJAJOBS=${JOBS}
+          echo "Building with ${NINJAJOBS} parallel jobs."
 
           ./src/script/build-with-container.py \
             -d centos9 \
             -e rpm \
-            -- \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-            -DENABLE_LTO=OFF \
-            -DWITH_TESTS=OFF
+            --image-variant packages
 
       # --- 5. OPTIMIZE (SLIM DOWN) ---
       - name: Filter RPMs
