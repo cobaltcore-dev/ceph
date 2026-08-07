@@ -240,10 +240,12 @@ jobs:
             ! -name "*devel*" \
             ! -name "*test*" \
             ! -name "*static*" \
+            ! -name "ceph-resource-agents-*.rpm" \
             -exec cp --target-directory=staging_rpms {} +
 
           shopt -s nullglob
           rpms=(staging_rpms/*.rpm)
+
           if (( ${#rpms[@]} == 0 )); then
             echo "Error: no runtime RPMs were produced."
             exit 1
