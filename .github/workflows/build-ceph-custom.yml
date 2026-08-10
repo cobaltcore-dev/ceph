@@ -3,23 +3,38 @@ name: Build Ceph CobaltCore (Squid)
 on:
   workflow_dispatch:
     inputs:
-      cherry_pick_commits:
-        description: "Commit hashes to cherry-pick, separated by spaces"
-        required: false
-        type: string
-      merge_branches:
-        description: "Branches to merge, separated by spaces"
-        required: false
-        type: string
       source_ref:
         description: "CobaltCore branch, tag, or commit SHA to build"
         required: true
         default: "squid-19.2.4-cobaltcore-storage"
         type: string
+
+      build_name:
+        description: "Unique build/image name, e.g. csi-v19.2.4-sapi8"
+        required: true
+        default: "csi-v19.2.4-sapi8"
+        type: string
+
+      cherry_pick_commits:
+        description: "Upstream ceph/ceph PR numbers or commit SHAs, separated by spaces"
+        required: false
+        type: string
+
+      merge_branches:
+        description: "Branches to merge, separated by spaces"
+        required: false
+        type: string
+
       push_image:
         description: "Push the resulting image to GitHub Packages"
         required: true
         default: true
+        type: boolean
+
+      update_latest:
+        description: "Also update the ghcr.io image tag 'latest'"
+        required: true
+        default: false
         type: boolean
 
 concurrency:
@@ -30,7 +45,7 @@ concurrency:
 
 jobs:
   build-ceph:
-    name: Build Ceph RPMs and image
+    name: Build ${{ inputs.build_name }}
     runs-on: self-hosted
     timeout-minutes: 720
 
@@ -43,6 +58,50 @@ jobs:
         shell: bash
 
     steps:
+      - name: Validate build metadata
+        env:
+          BUILD_NAME: ${{ inputs.build_name }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          CHERRY_PICK_ITEMS: ${{ inputs.cherry_pick_commits }}
+          MERGE_BRANCHES: ${{ inputs.merge_branches }}
+        run: |
+          set -euo pipefail
+
+          build_tag=$(
+            printf '%s' "${BUILD_NAME}" |
+              tr '[:upper:]' '[:lower:]' |
+              sed -E \
+                -e 's/[^a-z0-9_.-]+/-/g' \
+                -e 's/^[.-]+//' \
+                -e 's/[.-]+$//' |
+              cut -c1-128
+          )
+
+          if [[ -z "${build_tag}" ]]; then
+            echo "Error: build_name '${BUILD_NAME}' does not produce a valid image tag."
+            exit 1
+          fi
+
+          if [[ "${build_tag}" != "${BUILD_NAME}" ]]; then
+            echo "Normalized build name: '${BUILD_NAME}' -> '${build_tag}'"
+          fi
+
+          repository=${GITHUB_REPOSITORY,,}
+
+          echo "BUILD_TAG=${build_tag}" >> "${GITHUB_ENV}"
+          echo "IMAGE_REPOSITORY=ghcr.io/${repository}" >> "${GITHUB_ENV}"
+          echo "IMAGE_TAG=${build_tag}" >> "${GITHUB_ENV}"
+
+          {
+            echo "## CobaltCore Ceph build"
+            echo
+            echo "- Source ref: \`${SOURCE_REF}\`"
+            echo "- Build name: \`${build_tag}\`"
+            echo "- Published image: \`ghcr.io/${repository}:${build_tag}\`"
+            echo "- Cherry-pick items: \`${CHERRY_PICK_ITEMS:-none}\`"
+            echo "- Merge branches: \`${MERGE_BRANCHES:-none}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
       - name: Checkout CobaltCore Ceph
         uses: actions/checkout@v4
         with:
@@ -68,63 +127,171 @@ jobs:
           git remote add upstream https://github.com/ceph/ceph.git
           git config remote.upstream.tagOpt --no-tags
 
-          # Do not fetch all upstream history here. A full fetch can inspect
-          # historical submodule revisions that no longer exist remotely.
-
-      - name: Apply requested branches and commits
+      - name: Apply requested branches, PRs, and commits
         if: ${{ inputs.merge_branches != '' || inputs.cherry_pick_commits != '' }}
         env:
           MERGE_BRANCHES: ${{ inputs.merge_branches }}
-          CHERRY_PICK_COMMITS: ${{ inputs.cherry_pick_commits }}
+          CHERRY_PICK_ITEMS: ${{ inputs.cherry_pick_commits }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
           git config user.email "ci-bot@cobaltcore.dev"
           git config user.name "CobaltCore CI"
 
-          if [[ -n "${MERGE_BRANCHES}" ]]; then
-            read -r -a branches <<< "${MERGE_BRANCHES}"
+          apply_branch() {
+            local branch="$1"
 
-            for branch in "${branches[@]}"; do
-              git check-ref-format --branch "${branch}" >/dev/null
-              echo "Merging branch: ${branch}"
+            git check-ref-format --branch "${branch}" >/dev/null
+            echo "Merging branch: ${branch}"
 
-              if git ls-remote --exit-code --heads origin "refs/heads/${branch}" >/dev/null 2>&1; then
-                git fetch \
-                  --no-tags \
-                  --recurse-submodules=no \
-                  origin \
-                  "+refs/heads/${branch}:refs/remotes/origin/${branch}"
-                git merge --no-edit "refs/remotes/origin/${branch}"
-                continue
-              fi
+            if git ls-remote --exit-code --heads \
+              origin "refs/heads/${branch}" >/dev/null 2>&1; then
 
-              if git ls-remote --exit-code --heads upstream "refs/heads/${branch}" >/dev/null 2>&1; then
-                git fetch \
-                  --no-tags \
-                  --recurse-submodules=no \
-                  upstream \
-                  "+refs/heads/${branch}:refs/remotes/upstream/${branch}"
-                git merge --no-edit "refs/remotes/upstream/${branch}"
-                continue
-              fi
+              git fetch \
+                --no-tags \
+                --recurse-submodules=no \
+                origin \
+                "+refs/heads/${branch}:refs/remotes/origin/${branch}"
 
-              echo "Error: branch '${branch}' was not found in origin or upstream."
+              git merge --no-edit "refs/remotes/origin/${branch}"
+              return
+            fi
+
+            if git ls-remote --exit-code --heads \
+              upstream "refs/heads/${branch}" >/dev/null 2>&1; then
+
+              git fetch \
+                --no-tags \
+                --recurse-submodules=no \
+                upstream \
+                "+refs/heads/${branch}:refs/remotes/upstream/${branch}"
+
+              git merge --no-edit "refs/remotes/upstream/${branch}"
+              return
+            fi
+
+            echo "Error: branch '${branch}' was not found in origin or upstream."
+            exit 1
+          }
+
+          apply_commit() {
+            local commit="$1"
+
+            if [[ ! "${commit}" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+              echo "Error: '${commit}' is not a valid abbreviated or full Git commit hash."
               exit 1
-            done
-          fi
+            fi
 
-          if [[ -n "${CHERRY_PICK_COMMITS}" ]]; then
-            read -r -a commits <<< "${CHERRY_PICK_COMMITS}"
+            echo "Cherry-picking upstream commit: ${commit}"
 
-            for commit in "${commits[@]}"; do
-              if [[ ! "${commit}" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
-                echo "Error: '${commit}' is not a valid abbreviated or full Git commit hash."
+            if ! git cat-file -e "${commit}^{commit}" 2>/dev/null; then
+              git fetch \
+                --no-tags \
+                --recurse-submodules=no \
+                upstream \
+                "${commit}"
+            fi
+
+            git cherry-pick -x "${commit}"
+          }
+
+          apply_pr() {
+            local pr="$1"
+            local pr_ref
+            local page
+            local tmp_json
+            local api_url
+            local -a curl_args
+            local -a page_commits
+            local -a pr_commits
+
+            pr="${pr#\#}"
+            pr="${pr#pr:}"
+            pr="${pr#PR:}"
+
+            if [[ ! "${pr}" =~ ^[0-9]+$ ]]; then
+              echo "Error: '${pr}' is not a valid upstream PR number."
+              exit 1
+            fi
+
+            echo "Fetching upstream ceph/ceph PR #${pr}"
+
+            pr_ref="refs/remotes/upstream/pr/${pr}"
+
+            git fetch \
+              --no-tags \
+              --recurse-submodules=no \
+              upstream \
+              "+refs/pull/${pr}/head:${pr_ref}"
+
+            page=1
+            pr_commits=()
+
+            while true; do
+              tmp_json="$(mktemp)"
+              api_url="https://api.github.com/repos/ceph/ceph/pulls/${pr}/commits?per_page=100&page=${page}"
+
+              curl_args=(
+                --fail
+                --silent
+                --show-error
+                --location
+                --retry 3
+                -H "Accept: application/vnd.github+json"
+                -H "X-GitHub-Api-Version: 2022-11-28"
+              )
+
+              if [[ -n "${GH_TOKEN:-}" ]]; then
+                curl_args+=(-H "Authorization: Bearer ${GH_TOKEN}")
+              fi
+
+              if ! curl "${curl_args[@]}" "${api_url}" > "${tmp_json}"; then
+                rm -f "${tmp_json}"
+                echo "Error: unable to obtain the commit list for ceph/ceph PR #${pr}."
                 exit 1
               fi
 
-              echo "Cherry-picking commit: ${commit}"
+              mapfile -t page_commits < <(
+                python3 - "${tmp_json}" <<'PY'
+                import json
+                import sys
 
+                with open(sys.argv[1], encoding="utf-8") as f:
+                    payload = json.load(f)
+
+                if not isinstance(payload, list):
+                    raise SystemExit("GitHub API response was not a commit list")
+
+                for item in payload:
+                    print(item["sha"])
+                PY
+              )
+
+              rm -f "${tmp_json}"
+
+              if (( ${#page_commits[@]} == 0 )); then
+                break
+              fi
+
+              pr_commits+=("${page_commits[@]}")
+
+              if (( ${#page_commits[@]} < 100 )); then
+                break
+              fi
+
+              ((page += 1))
+            done
+
+            if (( ${#pr_commits[@]} == 0 )); then
+              echo "Error: ceph/ceph PR #${pr} contains no commits."
+              exit 1
+            fi
+
+            echo "PR #${pr} contains ${#pr_commits[@]} commit(s):"
+            printf '  %s\n' "${pr_commits[@]}"
+
+            for commit in "${pr_commits[@]}"; do
               if ! git cat-file -e "${commit}^{commit}" 2>/dev/null; then
                 git fetch \
                   --no-tags \
@@ -133,7 +300,33 @@ jobs:
                   "${commit}"
               fi
 
-              git cherry-pick "${commit}"
+              echo "Cherry-picking PR #${pr} commit ${commit}"
+              git cherry-pick -x "${commit}"
+            done
+          }
+
+          if [[ -n "${MERGE_BRANCHES}" ]]; then
+            read -r -a branches <<< "${MERGE_BRANCHES}"
+
+            for branch in "${branches[@]}"; do
+              apply_branch "${branch}"
+            done
+          fi
+
+          if [[ -n "${CHERRY_PICK_ITEMS}" ]]; then
+            read -r -a items <<< "${CHERRY_PICK_ITEMS}"
+
+            for item in "${items[@]}"; do
+              # Plain decimal numbers, #12345, and pr:12345 are PRs.
+              # Everything else is treated as a commit SHA.
+              if [[ "${item}" =~ ^[0-9]+$ ]] \
+                || [[ "${item}" =~ ^#[0-9]+$ ]] \
+                || [[ "${item}" =~ ^([pP][rR]):[0-9]+$ ]]; then
+
+                apply_pr "${item}"
+              else
+                apply_commit "${item}"
+              fi
             done
           fi
 
@@ -152,11 +345,13 @@ jobs:
             if [[ "${cgroup_limit}" =~ ^[0-9]+$ ]] \
               && (( ${#cgroup_limit} < 18 )) \
               && (( cgroup_limit > cgroup_usage )); then
+
               cgroup_available=$((cgroup_limit - cgroup_usage))
               if (( cgroup_available < effective_available_bytes )); then
                 effective_available_bytes=${cgroup_available}
               fi
             fi
+
           elif [[ -r /sys/fs/cgroup/memory/memory.limit_in_bytes ]]; then
             cgroup_limit=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
             cgroup_usage=$(cat /sys/fs/cgroup/memory/memory.usage_in_bytes)
@@ -164,6 +359,7 @@ jobs:
             if [[ "${cgroup_limit}" =~ ^[0-9]+$ ]] \
               && (( ${#cgroup_limit} < 18 )) \
               && (( cgroup_limit > cgroup_usage )); then
+
               cgroup_available=$((cgroup_limit - cgroup_usage))
               if (( cgroup_available < effective_available_bytes )); then
                 effective_available_bytes=${cgroup_available}
@@ -171,8 +367,6 @@ jobs:
             fi
           fi
 
-          # Keep 2 GiB for the runner and container runtime, then budget 3 GiB
-          # for every concurrent Ceph compilation job.
           headroom_bytes=$((2 * 1024 * 1024 * 1024))
           bytes_per_job=$((3 * 1024 * 1024 * 1024))
 
@@ -199,9 +393,11 @@ jobs:
 
           if podman container exists ceph_build; then
             echo "Removing stale ceph_build container..."
+
             podman ps -a \
               --filter "name=^ceph_build$" \
               --format "table {{.ID}}\t{{.Status}}\t{{.Names}}\t{{.Command}}"
+
             podman rm -f ceph_build
           fi
 
@@ -211,10 +407,14 @@ jobs:
         run: |
           set -euo pipefail
 
+          echo "Ceph source: ${SOURCE_REF}"
+          echo "Build name: ${BUILD_TAG}"
+
           ./src/script/build-with-container.py \
             --distro centos9 \
             --execute rpm \
             --current-branch="${SOURCE_REF}" \
+            --tag="${BUILD_TAG}" \
             --image-variant packages \
             --rpmbuild-arg=--without \
             --rpmbuild-arg=crimson \
@@ -280,35 +480,32 @@ jobs:
           ENTRYPOINT ["/usr/bin/ceph"]
           EOF
 
-      - name: Set image coordinates
+      - name: Build runtime image
         env:
           SOURCE_REF: ${{ inputs.source_ref }}
-        run: |
-          set -euo pipefail
-
-          repository=${GITHUB_REPOSITORY,,}
-          image_tag=${SOURCE_REF//\//-}
-          image_tag=${image_tag,,}
-          image_tag=$(printf '%s' "${image_tag}" | sed 's/[^a-z0-9._-]/-/g')
-
-          echo "IMAGE_REPOSITORY=ghcr.io/${repository}" >> "${GITHUB_ENV}"
-          echo "IMAGE_TAG=${image_tag}" >> "${GITHUB_ENV}"
-
-      - name: Build runtime image
+          CHERRY_PICK_ITEMS: ${{ inputs.cherry_pick_commits }}
         run: |
           set -euo pipefail
 
           echo "Building ${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+
           podman build \
             --file Containerfile.cobaltcore \
+            --label "org.opencontainers.image.title=${BUILD_TAG}" \
+            --label "org.opencontainers.image.version=${BUILD_TAG}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "io.cobaltcore.ceph.source-ref=${SOURCE_REF}" \
+            --label "io.cobaltcore.ceph.cherry-picks=${CHERRY_PICK_ITEMS}" \
+            --label "io.cobaltcore.github.run-id=${GITHUB_RUN_ID}" \
             --tag "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
             .
 
-          podman tag \
+          podman image inspect \
             "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
-            "${IMAGE_REPOSITORY}:latest"
+            --format '{{.Id}} {{index .RepoTags 0}}'
 
-      - name: Push to GitHub Packages
+      - name: Push build image to GitHub Packages
         if: ${{ inputs.push_image }}
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -320,8 +517,38 @@ jobs:
             --password-stdin \
             ghcr.io
 
+          echo "Pushing ${IMAGE_REPOSITORY}:${IMAGE_TAG}"
           podman push "${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+
+      - name: Update latest image tag
+        if: ${{ inputs.push_image && inputs.update_latest }}
+        run: |
+          set -euo pipefail
+
+          echo "Updating ${IMAGE_REPOSITORY}:latest -> ${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+
+          podman tag \
+            "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+            "${IMAGE_REPOSITORY}:latest"
+
           podman push "${IMAGE_REPOSITORY}:latest"
+
+      - name: Publish build summary
+        if: ${{ always() }}
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          CHERRY_PICK_ITEMS: ${{ inputs.cherry_pick_commits }}
+        run: |
+          {
+            echo
+            echo "### Result"
+            echo
+            echo "- Build tag: \`${BUILD_TAG}\`"
+            echo "- Source ref: \`${SOURCE_REF}\`"
+            echo "- Cherry-picks: \`${CHERRY_PICK_ITEMS:-none}\`"
+            echo "- Image: \`${IMAGE_REPOSITORY}:${IMAGE_TAG}\`"
+            echo "- Workflow run: \`${GITHUB_RUN_ID}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Log out from GitHub Packages
         if: ${{ always() && inputs.push_image }}
