@@ -253,19 +253,7 @@ jobs:
               fi
 
               mapfile -t page_commits < <(
-                python3 -c '
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as f:
-    payload = json.load(f)
-
-if not isinstance(payload, list):
-    raise SystemExit("GitHub API response was not a commit list")
-
-for item in payload:
-    print(item["sha"])
-' "${tmp_json}"
+                python3 -c 'import json,sys; payload=json.load(open(sys.argv[1], encoding="utf-8")); assert isinstance(payload,list), "GitHub API response was not a commit list"; [print(item["sha"]) for item in payload]' "${tmp_json}"
               )
 
               rm -f "${tmp_json}"
