@@ -289,7 +289,61 @@ jobs:
               fi
 
               echo "Cherry-picking PR #${pr} commit ${commit}"
-              git cherry-pick -x "${commit}"
+
+              if git cherry-pick -x "${commit}"; then
+                continue
+              fi
+
+              # Stable-branch backports can conflict in test registration even
+              # when the production RGW code applies cleanly. Handle only the
+              # known Keystone ACL unit-test CMake conflict mechanically.
+              mapfile -t conflicts < <(
+                git diff --name-only --diff-filter=U
+              )
+
+              if (( ${#conflicts[@]} == 1 )) \
+                && [[ "${conflicts[0]}" == "src/test/rgw/CMakeLists.txt" ]] \
+                && git show "${commit}:src/test/rgw/test_rgw_auth_keystone.cc" >/dev/null 2>&1; then
+
+                echo "Resolving known Squid CMake conflict for unittest_rgw_auth_keystone"
+
+                git checkout --ours -- src/test/rgw/CMakeLists.txt
+
+                if ! grep -q '^add_executable(unittest_rgw_auth_keystone ' \
+                  src/test/rgw/CMakeLists.txt; then
+
+                  awk '
+                    { print }
+                    $0 == "target_link_libraries(unittest_http_manager ${rgw_libs})" {
+                      print ""
+                      print "# unittest_rgw_auth_keystone"
+                      print "add_executable(unittest_rgw_auth_keystone test_rgw_auth_keystone.cc)"
+                      print "add_ceph_unittest(unittest_rgw_auth_keystone)"
+                      print "target_link_libraries(unittest_rgw_auth_keystone ${rgw_libs})"
+                    }
+                  ' src/test/rgw/CMakeLists.txt > src/test/rgw/CMakeLists.txt.tmp
+
+                  mv src/test/rgw/CMakeLists.txt.tmp src/test/rgw/CMakeLists.txt
+                fi
+
+                if ! grep -q '^add_executable(unittest_rgw_auth_keystone test_rgw_auth_keystone.cc)$' \
+                  src/test/rgw/CMakeLists.txt; then
+                  echo "Error: failed to insert unittest_rgw_auth_keystone into Squid CMakeLists.txt."
+                  git cherry-pick --abort || true
+                  exit 1
+                fi
+
+                git add src/test/rgw/CMakeLists.txt
+                GIT_EDITOR=true git cherry-pick --continue
+                continue
+              fi
+
+              echo "Error: PR #${pr} commit ${commit} has an unsupported cherry-pick conflict."
+              echo "Conflicting files:"
+              printf '  %s\n' "${conflicts[@]}"
+              git status --short
+              git cherry-pick --abort || true
+              exit 1
             done
           }
 
