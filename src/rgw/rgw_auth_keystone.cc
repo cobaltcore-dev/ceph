@@ -197,7 +197,7 @@ TokenEngine::get_acl_strategy(const TokenEngine::token_envelope_t& token) const
   const auto& user_name = token.get_user_name();
 
   /* Construct all possible combinations including Swift's wildcards. */
-  const std::array<std::string, 6> allowed_items = {
+  const std::array<std::string, 7> allowed_items = {
     make_spec_item(tenant_uuid, user_uuid),
     make_spec_item(tenant_name, user_name),
 
@@ -206,6 +206,7 @@ TokenEngine::get_acl_strategy(const TokenEngine::token_envelope_t& token) const
     make_spec_item(tenant_name, "*"),
     make_spec_item("*", user_uuid),
     make_spec_item("*", user_name),
+    make_spec_item("*", "*"),
   };
 
   /* Lambda will obtain a copy of (not a reference to!) allowed_items. */
@@ -655,11 +656,56 @@ auto EC2Engine::get_access_token(const DoutPrefixProvider* dpp,
 }
 
 EC2Engine::acl_strategy_t
-EC2Engine::get_acl_strategy(const EC2Engine::token_envelope_t&) const
+EC2Engine::get_acl_strategy(const EC2Engine::token_envelope_t& token) const
 {
-  /* This is based on the assumption that the default acl strategy in
-   * get_perms_from_aclspec, will take care. Extra acl spec is not required. */
-  return nullptr;
+  /* The primary identity is constructed upon UUIDs. */
+  const auto& tenant_uuid = token.get_project_id();
+  const auto& user_uuid = token.get_user_id();
+
+  /* For Keystone v2 an alias may be also used. */
+  const auto& tenant_name = token.get_project_name();
+  const auto& user_name = token.get_user_name();
+
+  /* Mirrors TokenEngine::get_acl_strategy() so S3 requests authenticated
+   * via Keystone honor the same Swift-format ACL entries. */
+  const std::array<std::string, 7> allowed_items = {
+    make_spec_item(tenant_uuid, user_uuid),
+    make_spec_item(tenant_name, user_name),
+
+    /* Wildcards. */
+    make_spec_item(tenant_uuid, "*"),
+    make_spec_item(tenant_name, "*"),
+    make_spec_item("*", user_uuid),
+    make_spec_item("*", user_name),
+    make_spec_item("*", "*"),
+  };
+
+  /* Lambda will obtain a copy of (not a reference to!) allowed_items. */
+  return [allowed_items, token_roles=token.roles](const rgw::auth::Identity::aclspec_t& aclspec) {
+    uint32_t perm = 0;
+
+    for (const auto& allowed_item : allowed_items) {
+      const auto iter = aclspec.find(allowed_item);
+
+      if (std::end(aclspec) != iter) {
+        perm |= iter->second;
+      }
+    }
+
+    for (const auto& r : token_roles) {
+      if (r.is_reader) {
+        if (r.is_admin) {    /* system scope reader persona */
+          /*
+           * Because system reader defeats permissions,
+           * we don't even look at the aclspec.
+           */
+          perm |= RGW_OP_TYPE_READ;
+        }
+      }
+    }
+
+    return perm;
+  };
 }
 
 EC2Engine::auth_info_t
