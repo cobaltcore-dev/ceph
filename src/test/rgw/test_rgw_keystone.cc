@@ -177,10 +177,10 @@ TEST(KeystoneImplicitDeny, AdminWins)
 // Part 2: enforcement of the mask.
 //
 // Part 1 proved which mask a token gets. The tests below prove what
-// that mask does during a request, using the real
-// verify_bucket_permission(): the bucket policy is checked first and
-// can override the mask; without a policy match the mask limits what
-// the ACL can give.
+// that mask does during a request, driving the real permission code
+// (evaluate_iam_policies() and verify_bucket_permission_no_policy()):
+// the bucket policy is checked first and can override the mask; without
+// a policy match the mask limits what the ACL can give.
 // ---------------------------------------------------------------------
 
 // A fake user identity, like the one the Keystone auth code builds for
@@ -207,18 +207,14 @@ public:
     const auto iter = aclspec.find(id);
     return (iter != aclspec.end()) ? iter->second : 0;
   }
-  bool is_admin() const override { return false; }
+  bool is_admin_of(const rgw_owner&) const override { return false; }
   bool is_owner_of(const rgw_owner&) const override { return owns; }
-  bool is_root() const override { return false; }
   uint32_t get_perm_mask() const override { return perm_mask; }
   void to_str(std::ostream& out) const override { out << id; }
   bool is_identity(const Principal& p) const override {
     return p.is_wildcard();
   }
   uint32_t get_identity_type() const override { return itype; }
-  std::optional<rgw::ARN> get_caller_identity() const override {
-    return std::nullopt;
-  }
   std::string get_acct_name() const override { return {}; }
   std::string get_subuser() const override { return {}; }
   const std::string& get_tenant() const override {
@@ -266,21 +262,36 @@ protected:
   // mask, request environment, bucket policy and bucket ACL.
   // perm_state holds the request data the permission code reads; in
   // the real server it is filled in after authentication.
+  //
+  // This walks the same two steps verify_bucket_permission() performs for a
+  // bucket op, calling the same functions it does: the bucket policy is
+  // evaluated first and an explicit Allow/Deny decides on its own; only when
+  // the policy does not match (Effect::Pass) does the ACL check run, and
+  // there the perm_mask limits what the ACL can give.
   bool put_allowed(uint32_t perm_mask, const rgw::IAM::Environment& env,
                    const boost::optional<rgw::IAM::Policy>& bucket_policy,
                    const RGWAccessControlPolicy& bucket_acl = {}) {
     CappedKeystoneIdentity identity(USERID, perm_mask);
     perm_state ps(cct.get(), env, &identity, bucket_info,
-                  rgw::s3::ObjectOwnership::ObjectWriter,
                   perm_mask, false /* defer_to_bucket_acls */,
                   nullptr /* referer */, false /* request_payer */);
     const NoDoutPrefix ndp(cct.get(), ceph_subsys_rgw);
     rgw_bucket b;
     b.name = "testbucket";
-    return verify_bucket_permission(&ndp, &ps, rgw::ARN(b, "obj"), false,
-                                    {} /* user_acl */, bucket_acl,
-                                    bucket_policy, {}, {},
-                                    rgw::IAM::s3PutObject);
+
+    const auto effect = evaluate_iam_policies(
+        &ndp, ps.env, *ps.identity, false /* account_root */,
+        rgw::IAM::s3PutObject, rgw::ARN(b, "obj"), bucket_policy,
+        {} /* identity_policies */, {} /* session_policies */);
+    if (effect == rgw::IAM::Effect::Deny) {
+      return false;
+    }
+    if (effect == rgw::IAM::Effect::Allow) {
+      return true;
+    }
+    return verify_bucket_permission_no_policy(
+        &ndp, &ps, {} /* user_acl */, bucket_acl,
+        rgw::IAM::op_to_perm(rgw::IAM::s3PutObject));
   }
 };
 
@@ -336,7 +347,6 @@ TEST_F(KeystoneCapEnforcement, GateBlocksAccountScopedWriteForCappedKeystone)
   CappedKeystoneIdentity reader(USERID, RGW_PERM_READ, TYPE_KEYSTONE);
   const rgw::IAM::Environment env;
   perm_state ps(cct.get(), env, &reader, bucket_info,
-                rgw::s3::ObjectOwnership::ObjectWriter,
                 RGW_PERM_READ, false, nullptr, false);
   const NoDoutPrefix ndp(cct.get(), ceph_subsys_rgw);
   const RGWAccessControlPolicy empty_user_acl;
@@ -354,7 +364,6 @@ TEST_F(KeystoneCapEnforcement, NonKeystoneReducedMaskNotCapped)
   CappedKeystoneIdentity local_subuser(USERID, RGW_PERM_READ, TYPE_RGW);
   const rgw::IAM::Environment env;
   perm_state ps(cct.get(), env, &local_subuser, bucket_info,
-                rgw::s3::ObjectOwnership::ObjectWriter,
                 RGW_PERM_READ, false, nullptr, false);
   const NoDoutPrefix ndp(cct.get(), ceph_subsys_rgw);
   const RGWAccessControlPolicy empty_user_acl;
