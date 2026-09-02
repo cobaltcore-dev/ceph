@@ -1,0 +1,68 @@
+name: promote
+
+# Triggered when a promote PR merges to a release/effort branch and a
+# release/* tag is created. Re-tags RC artifacts from staging to production
+# registry (NO REBUILD) and creates a GitHub Release.
+
+on:
+  push:
+    tags:
+      - "release/**"
+
+jobs:
+  republish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Sync deps
+        working-directory: release-management
+        run: uv sync --frozen
+
+      - name: Read MANIFEST for this release
+        id: manifest
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          # Strip "release/<product>-v" prefix to get the downstream version.
+          version="${REF_NAME#release/}"
+          version="${version#*-v}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          test -f "release-management/MANIFEST-$version.yaml" || { echo "MANIFEST missing"; exit 1; }
+
+      - name: Verify artifact digests against staging registry
+        working-directory: release-management
+        env:
+          VERSION: ${{ steps.manifest.outputs.version }}
+          CEPH_REPO: ${{ github.workspace }}
+        run: uv run python scripts/promote_verify.py --version="$VERSION"
+
+      - name: Re-tag RC artifacts to production registry
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          echo "TODO: skopeo copy staging→production for each container artifact"
+          echo "TODO: re-verify digest after re-tag, abort if mismatch"
+          # Foundation: this is the policy stub. Real registry plumbing is
+          # CI-specific and out of scope for the design doc.
+
+      - name: Create GitHub Release
+        env:
+          # Same-repo write; the default GITHUB_TOKEN is correct here.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          # Body sourced from the annotated tag message (--notes-from-tag).
+          gh release create "$REF_NAME" \
+            --notes-from-tag \
+            --target "$TARGET_SHA"
