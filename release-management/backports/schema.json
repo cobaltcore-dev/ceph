@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/release-management/backports/v1.json",
+  "title": "Downstream-Ceph backport file frontmatter",
+  "description": "YAML frontmatter of release-management/backports/<uuid>.md. See design doc §3.1.",
+  "type": "object",
+  "required": ["id", "title", "component", "category", "provenance", "justification", "risk"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+      "description": "UUIDv7. Time-ordered. Set by `just backport new`."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "component": {
+      "enum": ["rgw", "rgw-multisite", "rgw-admin", "rgw-s3", "dashboard", "build", "docs", "other"]
+    },
+    "category": {
+      "enum": ["feature", "fix", "security", "integration"]
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["upstream_pr", "other"] },
+        "upstream_prs": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri" },
+          "minItems": 1
+        },
+        "upstream_trackers": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri" }
+        },
+        "upstream_pr_state": {
+          "enum": ["merged-stable", "merged-main", "approved-open", "open-in-review"],
+          "description": "Snapshot of the upstream PR's state at file-creation time. Applies only to provenance.type == upstream_pr; omitted entirely for type == other (no upstream PR exists to have a state)."
+        },
+        "upstream_commits": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "minItems": 1,
+          "description": "Head commit SHA of each upstream PR — the tip we cherry-picked from. Parallel list to upstream_prs (same order, same length). The SHA is stable regardless of upstream merge state: an open PR has a head commit too. Required whenever type == upstream_pr; surfaces per-patch upstream anchoring in the rendered manifest."
+        },
+        "previous_backport": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "other": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "upstream_pr" } } },
+          "then": { "required": ["upstream_prs", "upstream_pr_state", "upstream_commits"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "other" } } },
+          "then": {
+            "required": ["other"],
+            "not": {
+              "anyOf": [
+                { "required": ["upstream_pr_state"] },
+                { "required": ["upstream_commits"] }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "justification": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["cve", "customer", "engineering"] },
+        "refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "customer" } } },
+          "then": { "required": ["refs"], "properties": { "refs": { "minItems": 1 } } }
+        }
+      ]
+    },
+    "risk": {
+      "type": "object",
+      "required": ["blast", "conflict", "coverage"],
+      "additionalProperties": false,
+      "properties": {
+        "blast": { "enum": ["cosmetic", "availability", "data-loss"] },
+        "conflict": { "enum": ["clean", "trivial", "substantive"] },
+        "coverage": { "enum": ["strong", "partial", "weak"] }
+      }
+    },
+    "data_structure_change": {
+      "type": "object",
+      "required": ["struct_v_bump", "upstream_coordinated"],
+      "additionalProperties": false,
+      "properties": {
+        "struct_v_bump": { "type": "string", "minLength": 1 },
+        "upstream_coordinated": { "type": "boolean" }
+      }
+    }
+  }
+}
