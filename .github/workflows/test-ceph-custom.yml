@@ -49,6 +49,15 @@ jobs:
           git submodule foreach --recursive git clean -fdx
           git submodule update --init --recursive
 
+          # build-with-container.py always runs `podman run --name=ceph_build` (hard-coded).
+          # A container left behind by a killed job (run 34588947862, 2026-09-14) blocked
+          # every later run with "container name ceph_build is already in use".
+          if podman container exists ceph_build; then
+            echo "::warning::removing leftover ceph_build container"
+            podman inspect ceph_build --format 'status={{.State.Status}} started={{.State.StartedAt}} finished={{.State.FinishedAt}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' || true
+            podman rm -f ceph_build
+          fi
+
       # --- 2. COMPUTE PARALLELISM ---
       - name: Compute build + test parallelism
         run: |
@@ -71,19 +80,64 @@ jobs:
           [[ $CTP -lt 2 ]] && CTP=2
           echo "CTEST_PARALLEL=$CTP" >> "$GITHUB_ENV"
 
-      # --- 3. BUILD CONTAINER + COMPILE TESTS ---
-      - name: Build container image and compile tests
+      # --- 3. BUILD CONTAINER IMAGE (with upstream's prebuilt Boost) ---
+      # build-with-container.py's own "build-container" step runs `podman build --pull`
+      # (pull policy "always"): every refresh of the floating ubuntu:22.04 tag rebuilds
+      # the image and re-runs install-deps.sh, which fetches the prebuilt ceph-libboost
+      # packages via shaman.ceph.com. shaman's libboost index is gone (HTTP 504 / empty)
+      # and install-deps.sh silently swallows that, so the image ends up without
+      # /opt/ceph and cmake falls back to building Boost from source (2026-09-11).
+      # Therefore the image is built here instead: a jammy base pinned by digest with
+      # ceph-libboost 1.82 pre-installed from chacra (install-deps.sh then sees
+      # installed_ver=1.82 and never contacts shaman), Dockerfile.build on top of it
+      # without --pull, and a hard check that the prebuilt Boost is really there.
+      - name: Build container image
+        env:
+          # docker.io/library/ubuntu:22.04 multi-arch index as of 2026-09-03; bump deliberately.
+          UBUNTU_DIGEST: sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
+          # The chacra repo that shaman resolved for install-deps.sh (same sha1 as in install-deps.sh).
+          CHACRA_LIBBOOST: https://chacra.ceph.com/r/libboost/master/2804368f5b807ba8334b0ccfeb8af191edeb996f/ubuntu/jammy/flavors/default
+          IMAGE_TAG: cobaltcore
         run: |
-          ./src/script/build-with-container.py -d jammy \
-            -e build-container -e container -e configure -e buildtests
+          podman build -t localhost/ceph-base:jammy-boost1.82 -f - . <<EOF
+          FROM docker.io/library/ubuntu@${UBUNTU_DIGEST}
+          RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+           && echo "deb [trusted=yes] ${CHACRA_LIBBOOST} jammy main" > /etc/apt/sources.list.d/libboost.list \
+           && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-unauthenticated \
+                ceph-libboost-atomic1.82-dev ceph-libboost-chrono1.82-dev ceph-libboost-container1.82-dev \
+                ceph-libboost-context1.82-dev ceph-libboost-coroutine1.82-dev ceph-libboost-date-time1.82-dev \
+                ceph-libboost-filesystem1.82-dev ceph-libboost-iostreams1.82-dev ceph-libboost-locale1.82-dev \
+                ceph-libboost-program-options1.82-dev ceph-libboost-python1.82-dev ceph-libboost-random1.82-dev \
+                ceph-libboost-regex1.82-dev ceph-libboost-system1.82-dev ceph-libboost-test1.82-dev \
+                ceph-libboost-thread1.82-dev ceph-libboost-timer1.82-dev \
+           && test -f /opt/ceph/include/boost/config.hpp \
+           && rm -rf /var/lib/apt/lists/*
+          EOF
 
-      # --- 4. RUN UNIT TESTS ---
+          # No --pull here: the locally built base must be accepted as-is.
+          podman build -t "ceph-build:${IMAGE_TAG}" \
+            --build-arg=DISTRO=localhost/ceph-base:jammy-boost1.82 \
+            --build-arg=CEPH_BASE_BRANCH=main \
+            -f Dockerfile.build .
+
+          # Never continue with a degraded image.
+          podman run --rm "ceph-build:${IMAGE_TAG}" test -f /opt/ceph/include/boost/config.hpp
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
+
+      # --- 4. CONFIGURE + COMPILE TESTS ---
+      # -I cache: use the image built above; never pull or rebuild it here.
+      - name: Configure and compile tests
+        run: |
+          ./src/script/build-with-container.py -d jammy --tag "$IMAGE_TAG" -I cache \
+            -e configure -e buildtests
+
+      # --- 5. RUN UNIT TESTS ---
       - name: Run ctest
         run: |
-          ./src/script/build-with-container.py -d jammy -e custom -- \
+          ./src/script/build-with-container.py -d jammy --tag "$IMAGE_TAG" -I cache -e custom -- \
             "cd build && ctest --parallel $CTEST_PARALLEL --test-load $NINJAJOBS --output-junit Testing/junit.xml --output-on-failure --no-compress-output --test-output-size-failed 1024000 -T Test"
 
-      # --- 5. PUBLISH RESULTS ---
+      # --- 6. PUBLISH RESULTS ---
       - name: Upload CTest results directory
         if: always()
         uses: actions/upload-artifact@v4
