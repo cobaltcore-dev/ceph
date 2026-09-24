@@ -154,6 +154,11 @@ Request that authenticate with Keystone also include:
 - keystone:role
 - keystone:userid
 
+Use these keys with ``StringEquals``. The "NotEquals" operators
+(``StringNotEquals`` and similar) return incorrect results when a user holds
+more than one role, which is the common case with Keystone, until the upstream
+NotEquals fix is backported; see :doc:`keystone` for details.
+
 We support certain s3 condition keys for bucket and object requests.
 
 *Support for the following bucket-related operations was added in the Mimic
