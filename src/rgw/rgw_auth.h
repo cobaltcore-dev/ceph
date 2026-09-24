@@ -576,6 +576,8 @@ public:
     const uint32_t acct_type;
     const std::string access_key_id;
     const std::string subuser;
+    const std::vector<std::string> keystone_roles;
+    const std::string keystone_user_id;
 
   public:
     enum class acct_privilege_t {
@@ -592,14 +594,19 @@ public:
              const acct_privilege_t level,
              const std::string access_key_id,
              const std::string subuser,
-             const uint32_t acct_type=TYPE_NONE)
+             const uint32_t acct_type=TYPE_NONE,
+             std::vector<std::string> keystone_roles = {},
+             const std::string keystone_user_id = {}
+            )
     : acct_user(acct_user),
       acct_name(acct_name),
       perm_mask(perm_mask),
       is_admin(acct_privilege_t::IS_ADMIN_ACCT == level),
       acct_type(acct_type),
       access_key_id(access_key_id),
-      subuser(subuser) {
+      subuser(subuser),
+      keystone_roles(std::move(keystone_roles)),
+      keystone_user_id(keystone_user_id) {
     }
   };
 
