@@ -162,17 +162,17 @@ public:
 
   class Role {
   public:
-    Role() : is_admin(false), is_reader(false) { }
+    Role() : is_admin(false), is_system_reader(false) { }
     Role(const Role &r) {
       id = r.id;
       name = r.name;
       is_admin = r.is_admin;
-      is_reader = r.is_reader;
+      is_system_reader = r.is_system_reader;
     }
     std::string id;
     std::string name;
     bool is_admin;
-    bool is_reader;
+    bool is_system_reader;
     void decode_json(JSONObj *obj);
   };
 
@@ -189,6 +189,15 @@ public:
   Project project;
   User user;
   std::list<Role> roles;
+  /* Permission tier for the token, computed once
+  * in update_roles(): the most permissive accepted
+  * role wins.
+  * - nullopt: token holds no accepted role.
+  * - RGW_PERM_NONE: implicit-deny
+  * - READ|READ-ACP: project-reader
+  * - FULL_CONTROL: plain or admin
+  */
+  std::optional<uint32_t> perm_tier;
 
   void decode_v3(JSONObj* obj);
   void decode_v2(JSONObj* obj);
@@ -206,6 +215,8 @@ public:
   const std::string& get_user_id() const {return user.id;};
   const std::string& get_user_name() const {return user.name;};
   bool has_role(const std::string& r) const;
+  uint32_t effective_perm_mask() const;
+  bool admitted() const { return perm_tier.has_value(); }
   bool expired() const {
     const uint64_t now = ceph_clock_now().sec();
     return std::cmp_greater_equal(now, get_expires());
@@ -214,8 +225,11 @@ public:
             const std::string& token_str,
             ceph::buffer::list& bl /* in */,
             ApiVersion version);
-  void update_roles(const std::vector<std::string> & admin,
-                    const std::vector<std::string> & reader);
+  void update_roles(const std::vector<std::string> & plain,
+                    const std::vector<std::string> & admin,
+                    const std::vector<std::string> & system_reader,
+                    const std::vector<std::string> & project_reader,
+                    const std::vector<std::string> & implicit_deny);
 };
 
 
