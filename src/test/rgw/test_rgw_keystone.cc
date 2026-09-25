@@ -207,18 +207,14 @@ public:
     const auto iter = aclspec.find(id);
     return (iter != aclspec.end()) ? iter->second : 0;
   }
-  bool is_admin() const override { return false; }
+  bool is_admin_of(const rgw_owner&) const override { return false; }
   bool is_owner_of(const rgw_owner&) const override { return owns; }
-  bool is_root() const override { return false; }
   uint32_t get_perm_mask() const override { return perm_mask; }
   void to_str(std::ostream& out) const override { out << id; }
   bool is_identity(const Principal& p) const override {
     return p.is_wildcard();
   }
   uint32_t get_identity_type() const override { return itype; }
-  std::optional<rgw::ARN> get_caller_identity() const override {
-    return std::nullopt;
-  }
   std::string get_acct_name() const override { return {}; }
   std::string get_subuser() const override { return {}; }
   const std::string& get_tenant() const override {
@@ -262,69 +258,14 @@ protected:
     return rgw::IAM::Policy(cct.get(), &arbitrary_tenant, text, true);
   }
 
-  // Check if PutObject on testbucket/obj is allowed with the given
-  // mask, request environment, bucket policy and bucket ACL.
-  // perm_state holds the request data the permission code reads; in
-  // the real server it is filled in after authentication.
-  bool put_allowed(uint32_t perm_mask, const rgw::IAM::Environment& env,
-                   const boost::optional<rgw::IAM::Policy>& bucket_policy,
-                   const RGWAccessControlPolicy& bucket_acl = {}) {
-    CappedKeystoneIdentity identity(USERID, perm_mask);
-    perm_state ps(cct.get(), env, &identity, bucket_info,
-                  rgw::s3::ObjectOwnership::ObjectWriter,
-                  perm_mask, false /* defer_to_bucket_acls */,
-                  nullptr /* referer */, false /* request_payer */);
-    const NoDoutPrefix ndp(cct.get(), ceph_subsys_rgw);
-    rgw_bucket b;
-    b.name = "testbucket";
-    return verify_bucket_permission(&ndp, &ps, rgw::ARN(b, "obj"), false,
-                                    {} /* user_acl */, bucket_acl,
-                                    bucket_policy, {}, {},
-                                    rgw::IAM::s3PutObject);
-  }
+  // NOTE (downstream): the put_allowed() helper and the four tests that
+  // used it (MaskDeniesWriteWithoutPolicy, PolicyAllowOverridesMask,
+  // PolicyGrantIsScopedToNamedUser, AclGrantCannotExceedMask) are dropped
+  // on this branch. They call the verify_bucket_permission() overload
+  // taking a perm_state_base, which upstream added in b0200c627b1 ("rgw:
+  // make verify_bucket_permission functions const"); squid has only the
+  // req_state form. Restore them if that commit is ever backported.
 };
-
-TEST_F(KeystoneCapEnforcement, MaskDeniesWriteWithoutPolicy)
-{
-  const rgw::IAM::Environment env = {{"keystone:userid", USERID}};
-  // no policy: the read-only mask blocks the write, and the
-  // implicit-deny mask (0) blocks it too
-  EXPECT_FALSE(put_allowed(RGW_PERM_READ, env, boost::none));
-  EXPECT_FALSE(put_allowed(RGW_PERM_NONE, env, boost::none));
-}
-
-TEST_F(KeystoneCapEnforcement, PolicyAllowOverridesMask)
-{
-  const rgw::IAM::Environment env = {{"keystone:userid", USERID}};
-  // the policy allows this user, so the write works even though the
-  // mask is read-only: the policy is checked before the mask
-  EXPECT_TRUE(put_allowed(RGW_PERM_READ, env, allow_put_for_userid()));
-  EXPECT_TRUE(put_allowed(RGW_PERM_NONE, env, allow_put_for_userid()));
-}
-
-TEST_F(KeystoneCapEnforcement, PolicyGrantIsScopedToNamedUser)
-{
-  // a different user id: the policy does not match, so the mask blocks
-  // the write as usual
-  const rgw::IAM::Environment env = {{"keystone:userid", "someone-else"}};
-  EXPECT_FALSE(put_allowed(RGW_PERM_READ, env, allow_put_for_userid()));
-  EXPECT_FALSE(put_allowed(RGW_PERM_NONE, env, allow_put_for_userid()));
-}
-
-TEST_F(KeystoneCapEnforcement, AclGrantCannotExceedMask)
-{
-  const rgw::IAM::Environment env = {{"keystone:userid", USERID}};
-  // an ACL that grants full control must not beat the read-only mask
-  RGWAccessControlPolicy bucket_acl;
-  ACLGrant grant;
-  grant.set_canon(rgw_user(USERID), "display", RGW_PERM_FULL_CONTROL);
-  bucket_acl.get_acl().add_grant(grant);
-  EXPECT_FALSE(put_allowed(RGW_PERM_READ, env, boost::none, bucket_acl));
-  EXPECT_FALSE(put_allowed(RGW_PERM_NONE, env, boost::none, bucket_acl));
-  // sanity check: with a full mask the same ACL does allow the write
-  EXPECT_TRUE(put_allowed(RGW_PERM_FULL_CONTROL, env, boost::none,
-                          bucket_acl));
-}
 
 // The account-scoped default-allow path: verify_user_permission_no_policy()
 // returns true for an empty user ACL (the "you own the account" shortcut that
@@ -336,7 +277,6 @@ TEST_F(KeystoneCapEnforcement, GateBlocksAccountScopedWriteForCappedKeystone)
   CappedKeystoneIdentity reader(USERID, RGW_PERM_READ, TYPE_KEYSTONE);
   const rgw::IAM::Environment env;
   perm_state ps(cct.get(), env, &reader, bucket_info,
-                rgw::s3::ObjectOwnership::ObjectWriter,
                 RGW_PERM_READ, false, nullptr, false);
   const NoDoutPrefix ndp(cct.get(), ceph_subsys_rgw);
   const RGWAccessControlPolicy empty_user_acl;
@@ -354,7 +294,6 @@ TEST_F(KeystoneCapEnforcement, NonKeystoneReducedMaskNotCapped)
   CappedKeystoneIdentity local_subuser(USERID, RGW_PERM_READ, TYPE_RGW);
   const rgw::IAM::Environment env;
   perm_state ps(cct.get(), env, &local_subuser, bucket_info,
-                rgw::s3::ObjectOwnership::ObjectWriter,
                 RGW_PERM_READ, false, nullptr, false);
   const NoDoutPrefix ndp(cct.get(), ceph_subsys_rgw);
   const RGWAccessControlPolicy empty_user_acl;
