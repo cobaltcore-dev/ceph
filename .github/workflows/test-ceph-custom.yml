@@ -49,6 +49,13 @@ jobs:
           git submodule foreach --recursive git clean -fdx
           git submodule update --init --recursive
 
+      # A job that dies mid-build (e.g. lost runner) leaves its container
+      # behind, and build-with-container.py always names it ceph_build.
+      - name: Remove leftover build container
+        run: |
+          podman ps -a --filter name=ceph_build
+          podman rm -f ceph_build
+
       # --- 2. COMPUTE PARALLELISM ---
       - name: Compute build + test parallelism
         run: |
