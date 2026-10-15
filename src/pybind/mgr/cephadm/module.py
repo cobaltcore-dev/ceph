@@ -2475,7 +2475,7 @@ Then run the following:
             'prefix': 'auth rotate',
             'entity': daemon_spec.entity_name(),
             'format': 'json',
-            'key_type': utils.ROTATION_CIPHER
+            'key_type': utils.key_type_for(daemon_spec.daemon_type)
         })
         if rc:
             raise OrchestratorError(
