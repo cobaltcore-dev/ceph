@@ -221,6 +221,50 @@ TEST(RGWRateLimit, allow_unlimited_access)
   EXPECT_EQ(0, delay);
 }
 
+TEST(RGWRateLimit, unlimited_access_not_left_large_read_ops_budget)
+{
+  // 0 values in RGWRateLimitInfo should allow unlimited access
+  std::atomic_bool replacing;
+  std::condition_variable cv;
+  RateLimiter ratelimit(replacing, cv);
+  RGWRateLimitInfo info;
+  info.enabled = true;
+  auto time = ceph::coarse_real_clock::now();
+  std::string key = "uuser123";
+
+  for (int i = 0; i < 10; i++)
+  {
+    int64_t delay = ratelimit.should_rate_limit("GET", key, time, &info);
+    EXPECT_EQ(0, delay);
+  }
+  time += 61s;
+  info.max_read_ops = 1; // make read ops limited
+  int64_t delay = ratelimit.should_rate_limit("GET", key, time, &info);
+  EXPECT_EQ(0, delay);
+}
+
+TEST(RGWRateLimit, unlimited_access_not_left_large_write_ops_budget)
+{
+  // 0 values in RGWRateLimitInfo should allow unlimited access
+  std::atomic_bool replacing;
+  std::condition_variable cv;
+  RateLimiter ratelimit(replacing, cv);
+  RGWRateLimitInfo info;
+  info.enabled = true;
+  auto time = ceph::coarse_real_clock::now();
+  std::string key = "uuser123";
+
+  for (int i = 0; i < 10; i++)
+  {
+    int64_t delay = ratelimit.should_rate_limit("PUT", key, time, &info);
+    EXPECT_EQ(0, delay);
+  }
+  time += 61s;
+  info.max_write_ops = 1; // make write ops limited
+  int64_t delay = ratelimit.should_rate_limit("PUT", key, time, &info);
+  EXPECT_EQ(0, delay);
+}
+
 TEST(RGWRateLimitGC, NO_GC_AHEAD_OF_TIME)
 {
   // Test if GC is not starting the replace before getting to map_size * 0.9
