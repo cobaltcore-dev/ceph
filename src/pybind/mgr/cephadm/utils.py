@@ -58,8 +58,11 @@ LEGACY_CIPHER = 'aes'
 LEGACY_CIPHER_DAEMON_TYPES = {'nvmeof'}
 
 
-# CryptoKey type numbers (CEPH_CRYPTO_AES, CEPH_CRYPTO_AES256KRB5)
-CRYPTO_KEY_TYPES = {1: 'aes', 2: 'aes256k'}
+# CryptoKey type numbers, c.f. CEPH_CRYPTO_* in src/include/ceph_fs.h
+CEPH_CRYPTO_AES = 0x1
+CEPH_CRYPTO_AES256KRB5 = 0x2
+CRYPTO_KEY_TYPES = {CEPH_CRYPTO_AES: LEGACY_CIPHER,
+                    CEPH_CRYPTO_AES256KRB5: ROTATION_CIPHER}
 
 
 def keyring_key_type(keyring: str) -> Optional[str]:
