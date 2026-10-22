@@ -48,6 +48,51 @@ ALLOWED_CIPHERS = ['aes', 'aes256k']
 # ROTATION_CIPHER is the cipher the new keys will be set
 # up with after we rotate them
 ROTATION_CIPHER = 'aes256k'
+# The nvmeof gateway images of this release (quay.io/ceph/nvmeof 1.2.x, and
+# 1.4.x, the squid line) carry their own librados, from before aes256k: with
+# an aes256k key the gateway cannot connect at all ("RADOS I/O error (error
+# connecting to the cluster)", "Unable to create OMAP, exiting!").  Give the
+# daemons whose images lag behind a key of the previous type, until their
+# images know the new one.
+LEGACY_CIPHER = 'aes'
+LEGACY_CIPHER_DAEMON_TYPES = {'nvmeof'}
+
+
+# CryptoKey type numbers, c.f. CEPH_CRYPTO_* in src/include/ceph_fs.h
+CEPH_CRYPTO_AES = 0x1
+CEPH_CRYPTO_AES256KRB5 = 0x2
+CRYPTO_KEY_TYPES = {CEPH_CRYPTO_AES: LEGACY_CIPHER,
+                    CEPH_CRYPTO_AES256KRB5: ROTATION_CIPHER}
+
+
+def keyring_key_type(keyring: str) -> Optional[str]:
+    """
+    The type of the key in a keyring ('aes', 'aes256k'), from the key's
+    first two bytes (CryptoKey: le16 type, utime_t created, le16 len,
+    secret), or None if there is no key to read.
+    """
+    import base64
+    import struct
+    for line in keyring.splitlines():
+        name, _, value = line.partition('=')
+        if name.strip() != 'key':
+            continue
+        try:
+            raw = base64.b64decode(value.strip())
+            t = struct.unpack('<H', raw[:2])[0]
+        except Exception:
+            return None
+        return CRYPTO_KEY_TYPES.get(t)
+    return None
+
+
+def key_type_for(daemon_type: str) -> str:
+    """The cephx key type to create or rotate a daemon's key with."""
+    if daemon_type in LEGACY_CIPHER_DAEMON_TYPES:
+        return LEGACY_CIPHER
+    return ROTATION_CIPHER
+
+
 # cipher mons should use by default for service requests
 # Do not set the service cipher until all core (mon/mgr/osd/mds)
 # daemons have been upgraded
