@@ -30,27 +30,9 @@ class NvmeofService(CephService):
         nvmeof_gw_id = daemon_spec.daemon_id
         host_ip = self.mgr.inventory.get_addr(daemon_spec.host)
 
-        entity = self.get_auth_entity(nvmeof_gw_id)
-        key_type = utils.key_type_for(self.TYPE)
-        keyring = self.get_keyring_with_caps(entity,
+        keyring = self.get_keyring_with_caps(self.get_auth_entity(nvmeof_gw_id),
                                              ['mon', 'profile rbd',
-                                              'osd', 'profile rbd'],
-                                             key_type=key_type)
-        if key_type != utils.ROTATION_CIPHER and \
-                utils.keyring_key_type(keyring) == utils.ROTATION_CIPHER:
-            # a gateway deployed with an aes256k key (cephadm did so from
-            # 19.2.6 on) never started: give it a key it can use
-            logger.info(f'rotating {entity} to a {key_type} key: the nvmeof '
-                        'gateway image cannot use an aes256k key')
-            ret, out, err = self.mgr.mon_command({
-                'prefix': 'auth rotate', 'entity': entity,
-                'format': 'json', 'key_type': key_type})
-            if ret == 0:
-                keyring = self.get_keyring_with_caps(
-                    entity, ['mon', 'profile rbd', 'osd', 'profile rbd'],
-                    key_type=key_type)
-            else:
-                logger.warning(f'could not rotate {entity}: {err}')
+                                              'osd', 'profile rbd'])
 
         # TODO: check if we can force jinja2 to generate dicts with double quotes instead of using json.dumps
         transport_tcp_options = json.dumps(spec.transport_tcp_options) if spec.transport_tcp_options else None
