@@ -52,6 +52,10 @@ tgt_path = {{ spec.tgt_path }}
 rpc_socket_dir = {{ spec.rpc_socket_dir }}
 rpc_socket_name = {{ spec.rpc_socket_name }}
 timeout = {{ spec.spdk_timeout }}
+{# 1.4.x picks its cluster allocator from whichever of bdevs_per_cluster,
+   flat_bdevs_per_cluster or cluster_connections is set, in that order, and
+   we emit only this one. Dropping it leaves the gateway with no allocator:
+   it exits at startup with "Unknown cluster allocator in the config". #}
 bdevs_per_cluster = {{ spec.bdevs_per_cluster }}
 log_level = {{ spec.spdk_log_level }}
 conn_retries = {{ spec.conn_retries }}

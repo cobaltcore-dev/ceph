@@ -130,7 +130,7 @@ os._exit = os_exit_noop   # type: ignore
 DEFAULT_IMAGE = 'quay.io/ceph/ceph'
 DEFAULT_PROMETHEUS_IMAGE = 'quay.io/prometheus/prometheus:v2.51.0'
 DEFAULT_NODE_EXPORTER_IMAGE = 'quay.io/prometheus/node-exporter:v1.7.0'
-DEFAULT_NVMEOF_IMAGE = 'quay.io/ceph/nvmeof:1.2.5'
+DEFAULT_NVMEOF_IMAGE = 'quay.io/ceph/nvmeof:1.4.29'
 DEFAULT_LOKI_IMAGE = 'quay.io/ceph/loki:3.0.0'
 DEFAULT_PROMTAIL_IMAGE = 'quay.io/ceph/promtail:3.0.0'
 DEFAULT_ALERT_MANAGER_IMAGE = 'quay.io/prometheus/alertmanager:v0.25.0'
@@ -2475,7 +2475,7 @@ Then run the following:
             'prefix': 'auth rotate',
             'entity': daemon_spec.entity_name(),
             'format': 'json',
-            'key_type': utils.key_type_for(daemon_spec.daemon_type)
+            'key_type': utils.ROTATION_CIPHER
         })
         if rc:
             raise OrchestratorError(
