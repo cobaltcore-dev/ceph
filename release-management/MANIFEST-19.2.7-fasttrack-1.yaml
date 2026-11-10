@@ -1,0 +1,805 @@
+schema_version: 1
+release:
+  product: cobaltcore-storage
+  upstream_base: '19.2.7'
+  upstream_tag: 'v19.2.7'
+  upstream_commit: '9ec952b9f9668e9fa97e29a4c2b51e951674df2a'
+  branch: squid-19.2.7-cobaltcore-storage
+  effort_milestone: squid-19.2.7-cobaltcore-storage
+  downstream_version: 19.2.7-fasttrack-1
+  downstream_tag: release/cobaltcore-storage-v19.2.7-fasttrack-1
+  source_commit: 68da157cc2d8b47409d2911b8c9c70d9c6eb1d39
+  rc_tag: cut/v19.2.7-fasttrack-1-rc3
+  promoted_at: '2026-11-10T08:13:17+00:00'
+  promoted_by: s0nea
+  release_record:
+    file: release-management/releases/v19.2.7-fasttrack-1/RELEASE.md
+    test_evidence_dir: release-management/releases/v19.2.7-fasttrack-1/test-evidence/
+  artifacts:
+  - kind: container-image
+    ref: harbor.clyso.com/c-customers/cobaltcore/ceph/ceph
+    tag: 19.2.7-fasttrack-1
+    digest: sha256:5123bac4cbc7ac2af1183cf20d0956882869a11118a22b505f6ea60f2dad8895
+  - kind: container-image
+    ref: ghcr.io/cobaltcore-dev/ceph
+    tag: cobaltcore-storage-v19.2.7-fasttrack-1
+    digest: sha256:5123bac4cbc7ac2af1183cf20d0956882869a11118a22b505f6ea60f2dad8895
+backports:
+- id: 01a142fa-04c1-750b-8d64-fa05fea8072b
+  title: Release bootstrap
+  component: build
+  category: integration
+  provenance:
+    type: upstream_pr
+    upstream_prs:
+    - https://github.com/ceph/ceph/pull/72108
+    - https://github.com/ceph/ceph/pull/72167
+    upstream_pr_state: merged-stable
+    upstream_commits:
+    - 5aff2216101316107dbaa66e6b26a9afc59d5853
+    - c96865f0e89ed81a9a97cbae1641e53a75fe8c47
+    upstream_trackers:
+    - https://tracker.ceph.com/issues/81011
+    - https://tracker.ceph.com/issues/81012
+  justification:
+    type: engineering
+    refs:
+    - cobaltcore-dev/cloud-storage#607
+    - none
+    public_summary: bootstrap files used by release-management tool
+  risk:
+    blast: availability
+    conflict: clean
+    coverage: weak
+    upstream: merged-stable
+    total: 7
+    band: medium
+  risk_notes: "- **blast: availability** — the change touches only the build of the\n  dashboard frontend\
+    \ (`src/pybind/mgr/dashboard/frontend/CMakeLists.txt`).\n  Without it, every build with `WITH_MGR_DASHBOARD_FRONTEND`\
+    \ fails at the\n  \"dashboard nodeenv is being installed\" step since nodeenv 1.11.0, so no\n  packages\
+    \ or images can be produced. No runtime code is changed.\n- **conflict: clean** — cherry-picked from\
+    \ the squid backport\n  (ceph/ceph#72167, c96865f0e89e); the resulting diff is identical to the\n\
+    \  upstream squid commit. The squid-vs-main conflict was already resolved\n  upstream.\n- **coverage:\
+    \ weak** — no unit test covers the CMake rule. It is exercised\n  by any build with the dashboard\
+    \ frontend enabled (e.g. the unit test CI\n  workflow), which fails without this fix."
+  behavior_change: 'None. Build-only change: the `chown` of `node-env/src` is skipped when
+
+    nodeenv (>= 1.11.0) did not leave that directory behind; with older
+
+    nodeenv versions the build behaves as before. The produced binaries and
+
+    dashboard assets are unchanged.'
+  upgrade_notes: None.
+  derived:
+    patch_status: active
+    merge_commit: 41f71367df101fc7e589fb9b35146e1a3ca0c6d5
+    commits:
+    - e16b97adffccc19edd4d85a2ae47c77232823c9d
+    - 7c32b1fe22d77b06d03273227d2d94319c83097a
+    - ab5721305848039c4e6691db503bd1b72ee2b63b
+    - b57da71ef5d3ae42df6e190ed1853ef4023eec77
+    - 07b90753acf3e78430bebc543383c1b65fec1e68
+- id: 01a143b6-5653-75f3-b580-de1436c92efd
+  title: 'IAM / Bucket Policy: Keystone role and user ID support'
+  component: rgw
+  category: feature
+  provenance:
+    type: upstream_pr
+    upstream_prs:
+    - https://github.com/ceph/ceph/pull/67752
+    upstream_pr_state: merged-main
+    upstream_commits:
+    - b06b7a82ed1a5c57dce8b9ce2fa0931fe0f55ff7
+    previous_backport: 01a0cdb3-3f84-74ab-9403-c7638a039697
+  justification:
+    type: customer
+    refs:
+    - cobaltcore-dev/cloud-storage#611
+    - cobaltcore-dev/cloud-storage#467
+    - cobaltcore-dev/cloud-storage#380
+    - cobaltcore-dev/cloud-storage#372
+    public_summary: 'Allows Keystone role names and user IDs to be injected as `keystone:role` and
+
+      `keystone:userid` condition keys in S3 bucket policies, enabling role-based and
+
+      per-user access control via standard IAM policy conditions.
+
+
+      Note: do not use `StringNotEquals` or the other "NotEquals" conditions in this
+
+      release; see the known limitation below.'
+  risk:
+    blast: cosmetic
+    conflict: clean
+    coverage: partial
+    upstream: merged-main
+    total: 5
+    band: low
+  risk_notes: '**blast: cosmetic** — purely additive. Two new condition keys are populated for
+
+    Keystone-authenticated requests. No existing condition key, policy or auth path
+
+    changes meaning, and non-Keystone requests are untouched.
+
+
+    **conflict: substantive** — the cherry-picks did not apply mechanically.
+
+    Upstream wrote this PR against a tree that already had `AuthInfo::keystone_user`
+
+    and `AuthInfo::keystone_scope`, added by an unrelated upstream change
+
+    (3180812e541, "rgw: Add Keystone scope information to ops logging"). This branch
+
+    has neither, and `src/rgw/rgw_keystone_scope.h` does not exist here at all. Both
+
+    fields and the `build_scope_info()` call were dropped during resolution; only
+
+    `keystone_roles` and `keystone_user_id` were taken. Verified afterwards by
+
+    diffing `AuthInfo` against upstream/squid: the only differences are the two new
+
+    members, two trailing defaulted constructor parameters, and two initialiser
+
+    entries. Because the new parameters are trailing and defaulted, every existing
+
+    caller compiles unchanged.
+
+
+    **coverage: partial** — 39/39 unit tests pass, and 11/11 live end-to-end checks
+
+    pass against a real Keystone, covering both keys for single-role, multi-value,
+
+    wildcard and per-user matching. However, upstream''s
+
+    `KeyStoneRoleNotStringEquals` test was deliberately dropped: it asserts the
+
+    fixed NotEquals behaviour, which this branch does not have. The `ConditionTest`
+
+    fixture it depends on was added by hand rather than taken from upstream, as it
+
+    belongs to the same absent upstream PR.
+
+
+    The NotEquals fault described below is pre-existing on squid and is not
+
+    introduced by this backport. The upstream fix (c4e750e6767, 225241d6ae6,
+
+    c8372be8800) is tracked as a separate backport candidate, since it changes
+
+    evaluation of every condition key and needs its own review.'
+  behavior_change: 'Requests authenticated via Keystone now expose two additional IAM policy
+
+    condition keys: `keystone:role` (one entry per role, lowercased) and
+
+    `keystone:userid` (the Keystone user UUID). Requests not authenticated via
+
+    Keystone are unchanged, and no existing policy changes behaviour.
+
+
+    ### Known limitation: "NotEquals" conditions
+
+
+    In this release, `StringNotEquals` and the other "NotEquals" conditions behave
+
+    differently than they do in Ceph main. Here a condition matches when the value
+
+    differs from any one of the listed values, instead of only when it differs from
+
+    all of them. This means a rule such as "deny anyone who is not an admin" will
+
+    also deny a user who is an admin, if that user holds other roles as well. The
+
+    behaviour was corrected upstream in commit
+
+    `225241d6ae6fc43fd6515910a5450006006d4ce0`, which exists only on the main branch
+
+    and is not part of squid. Until that change is included, avoid "NotEquals"
+
+    conditions in bucket policies and write the rule using `StringEquals` instead.
+
+
+    This affects nearly all Keystone users, because Keystone assigns implied roles
+
+    automatically — a user granted only `member` typically also holds `reader`.
+
+
+    ### Two further points for policy authors
+
+
+    Role names in policies are case-sensitive. Roles are lowercased on the way into
+
+    the policy environment, so how the role is spelled in Keystone does not matter,
+
+    but the value typed in the policy is compared exactly. A policy containing
+
+    `"TestRole"` never matches and gives no warning. Write role names in lower case,
+
+    or use `StringEqualsIgnoreCase`.
+
+
+    Rules that distinguish between users of the same project must be written as
+
+    `Deny`. All users in an OpenStack project share a single RGW account, so each is
+
+    an owner of buckets created there, and owners are not restricted by `Allow`
+
+    conditions. `Deny` statements do apply to owners and discriminate correctly.'
+  upgrade_notes: None.
+  derived:
+    patch_status: active
+    merge_commit: 8b338a43419bf2dca9c9fc45423adea43b41c1ee
+    commits:
+    - 8d5f0b844088e6b1102545e45cde703f7d0a0619
+    - f8e415aa208f1617eb28b18ed68eeaced886c604
+    - dd86708781135eac645ba757e00d23e249eeac5a
+    - 98806d2b32603667791c5f6c231860edb4c10afa
+- id: 01a14402-60b5-7b0e-9e40-46b110a790de
+  title: Write Lock Lua Extensions
+  component: rgw
+  category: feature
+  provenance:
+    type: upstream_pr
+    upstream_prs:
+    - https://github.com/ceph/ceph/pull/67219
+    - https://github.com/ceph/ceph/pull/67548
+    - https://github.com/ceph/ceph/pull/66065
+    upstream_pr_state: merged-main
+    upstream_commits:
+    - 4924831fc52b05557d42c68065f8b15a83117ba5
+    - 15a36f1fb286cd3c30df0244fb4dd91dcc644287
+    - cb6a2e99bf7ed01ac5db3e1e24d65fa3979b841f
+    upstream_trackers:
+    - https://tracker.ceph.com/issues/75195
+    - https://tracker.ceph.com/issues/74756
+    - https://tracker.ceph.com/issues/73485
+    - https://tracker.ceph.com/issues/76126
+    previous_backport: 01a0d3b1-e48a-7f08-ab0d-0a549f628691
+  justification:
+    type: customer
+    refs:
+    - cobaltcore-dev/cloud-storage#613
+    - cobaltcore-dev/cloud-storage#310
+    public_summary: 'RGW Lua scripting extensions to allow "Write Lock" feature
+
+
+      New postAuth Lua hook point that runs after authentication / authorization but before the operation
+      executes.
+
+      Lua scripts can now read bucket tags.
+
+      Lua scripts can abort request processing.'
+  risk:
+    blast: availability
+    conflict: clean
+    coverage: strong
+    upstream: merged-main
+    total: 5
+    band: low
+  risk_notes: The postAuth hook runs on every request. A slow or buggy Lua script will add latency to
+    all S3 operations.
+  behavior_change: 'A new postAuth Lua hook point is available. Scripts can read bucket
+
+    tags and abort request processing. Lua is inactive out of the box (no
+
+    scripts are uploaded by default).'
+  upgrade_notes: (Operator instructions, if any.)
+  derived:
+    patch_status: active
+    merge_commit: bdad4f5e12add4facf11d1a99638bf49f0049646
+    commits:
+    - bad63bb7b75d4570c35793f54a6d6403528b9b0f
+    - 4aa55ae68a8533d47eefcdcbcbdae58be71738db
+    - 5de4278e98b1a156a9c872d0a55fc285da2c6f00
+    - f5d7e3213a0ef52a368ab992a35d9ac0b7e4e834
+    - de334ca94b2a87c1c16d3acaaffabc4a53b18ca5
+    - 5b9d2943fc35737f4c8019447874fba76984ebe5
+- id: 01a14417-d161-7221-87ad-c32f7e8170ec
+  title: Keystone Project RO/Viewer role + Implicit Deny
+  component: rgw
+  category: feature
+  provenance:
+    type: upstream_pr
+    upstream_prs:
+    - https://github.com/ceph/ceph/pull/70372
+    upstream_pr_state: approved-open
+    upstream_commits:
+    - c04bf078c2a9f4b11fe978a655c86d5efb4ba230
+    previous_backport: 01a0d759-c470-741d-8768-e3924fdfb44e
+  justification:
+    type: customer
+    refs:
+    - cobaltcore-dev/cloud-storage#616
+    - cobaltcore-dev/cloud-storage#468
+    - cobaltcore-dev/cloud-storage#511
+    public_summary: 'This feature introduces two new config options: `rgw_keystone_accepted_project_reader_roles`
+      and `rgw_keystone_implicit_deny_roles`.
+
+
+      - `rgw_keystone_accepted_project_reader_roles`:  A reader role, but can be granted more permissions
+      by using bucket policy and condition keys, keystone:userid and keystone:role.
+
+      - `rgw_keystone_implicit_deny_roles`: No permissions by default, but authenticated by keystone.
+      Similar to reader role above, more permission can be granted using bucket policy and conditions,
+      keystone:userid and keystone:role'
+  risk:
+    blast: availability
+    conflict: trivial
+    coverage: strong
+    upstream: approved-open
+    total: 7
+    band: medium
+  risk_notes: "**blast: availability** — the two new roles are off by default, so nothing\nchanges for\
+    \ existing users until an operator configures them. The reason this\nis not rated cosmetic is that\
+    \ the change reworks how permissions are worked out\nfor *every* Keystone user, not only for users\
+    \ of the new roles. If that went\nwrong, people could lose access they should have. That is recoverable\
+    \ and no\ndata is at risk, which is why it is availability rather than data-loss.\n\n**conflict: substantive**\
+    \ — the upstream changes did not apply cleanly to this\nrelease. Upstream has since gained several\
+    \ Keystone and S3 features that are\nnot in squid, and the patches were written on top of them. Five\
+    \ conflicts had\nto be resolved by hand, each time keeping only the parts belonging to this\nfeature\
+    \ and leaving the unrelated newer features out. This is the kind of\nchange where the downstream result\
+    \ deserves review in its own right, not just a\ncheck that it matches upstream.\n\n**coverage: strong**\
+    \ — 88 checks in total, none failing: some against the\ncode on its own, the rest against a running\
+    \ gateway talking to a real Keystone\nserver. What was checked:\n\n- A user with only a reader role\
+    \ can read, and cannot write. Every storage\n  operation a client can make was tried, one by one,\
+    \ including bucket settings\n  and notifications: reads succeeded, writes were refused.\n- A user\
+    \ with only an implicit-deny role can do nothing at all, not even list\n  the buckets in its own project.\n\
+    - A user holding a normal role such as `member`, or `admin`, still has full\n  control. Nothing changes\
+    \ for existing users.\n- A bucket policy naming a capped user can give it access it would not\n  otherwise\
+    \ have, including write access for a reader. This was checked with a\n  policy naming the user directly\
+    \ and with a policy naming their role.\n- That extra access is limited to what the policy says: another\
+    \ user is still\n  refused, the same user is still refused on a different bucket, and removing\n \
+    \ the policy puts the restriction back.\n- The Keystone condition keys added by the earlier backport\
+    \ still work.\n\nFour of the upstream tests could not be carried over, because they rely on\ninternals\
+    \ that this release does not have. What they checked is covered by the\nchecks above against the running\
+    \ gateway. Restoring them would mean backporting\na further upstream change unrelated to this feature;\
+    \ a note in the test file\nrecords which one.\n\n**Taken ahead of upstream.** The upstream change\
+    \ is approved but not yet\nmerged. If it is revised before it lands, this backport and the final upstream\n\
+    version could differ, and the next upstream sync may need rework."
+  behavior_change: "Two new configuration options, both defaulting to empty, so nothing changes\nuntil\
+    \ an operator sets them.\n\n- `rgw keystone accepted project reader roles` — a role listed here admits\
+    \ the\n  user on its own and caps it to `RGW_PERM_READ | RGW_PERM_READ_ACP` within its\n  own Keystone\
+    \ project. Reads and configuration inspection are allowed; writes\n  are refused.\n- `rgw keystone\
+    \ implicit deny roles` — a role listed here admits the user with\n  no implicit permissions at all.\
+    \ Such a user cannot even list its project's\n  buckets without an explicit policy grant.\n\nFor both\
+    \ tiers the most permissive accepted role wins, so a user that also\nholds `admin` or a plain accepted\
+    \ role such as `member` receives full control.\nBoth caps are a floor, not a ceiling: a bucket policy\
+    \ naming the user by\n`keystone:userid` or `keystone:role` grants access for that bucket only.\n\n\
+    Refused up front for a capped identity regardless of policy: bucket creation,\nSwift account-metadata\
+    \ writes, and STS `AssumeRole` (which would replace the\nidentity with a role identity carrying no\
+    \ permission mask, discarding the cap).\n\nThe caps do not apply to the librgw/NFS-Ganesha frontend,\
+    \ to Keystone users\nassociated with an RGW account (governed entirely by IAM policy), or to\n`radosgw-admin`\
+    \ and the admin REST API."
+  upgrade_notes: "No migration and no action required on upgrade. Both options default to empty\nand the\
+    \ behaviour of existing Keystone users is unchanged.\n\nTo adopt the feature, add the Keystone role\
+    \ name to the relevant option:\n\n    rgw keystone accepted roles = member\n    rgw keystone accepted\
+    \ project reader roles = objectstore_viewer\n\nAssign a user *only* the reader role to keep it read-only;\
+    \ any additional\naccepted role restores full control. Setting `rgw keystone implicit tenants =\n\
+    true` is recommended, as the documentation notes."
+  derived:
+    patch_status: active
+    merge_commit: 2a392736c991e715ea68dfbe69eea68ed9c8cd1f
+    commits:
+    - f643f9a96903af79145be521429527fbbbb6c547
+    - dcdecd3978bd28b17cfbb4e1dfe9b989f4285838
+    - c782fa983401c42077ff9601c2dd86ace8afbab3
+    - b3e780c2ff54a08b2b393271ee8380053e5beca5
+    - 049bc70048e30329f0433bcb538ceeb707a2a11c
+- id: 01a1443c-8dac-713b-90c4-9dd10156135c
+  title: KMS Cache
+  component: rgw
+  category: feature
+  provenance:
+    type: upstream_pr
+    upstream_prs:
+    - https://github.com/ceph/ceph/pull/61256
+    - https://github.com/ceph/ceph/pull/58229
+    - https://github.com/ceph/ceph/pull/57188
+    upstream_pr_state: merged-main
+    upstream_commits:
+    - 56253c4ae02ecffcf878f5046839991f3e7b0d0e
+    - 9239b4b5ad4fd19696f8888652e4c32677b56c8b
+    - be4ddd75012781ed621c2cf75f4e315a95b7ffd0
+    upstream_trackers:
+    - tracker.ceph.com/issues/68524
+    previous_backport: 019eb08c-159f-7a78-b689-5d37a7d343d0
+  justification:
+    type: customer
+    refs:
+    - cobaltcore-dev/cloud-storage#617
+    - cobaltcore-dev/cloud-storage#125
+    public_summary: 'Adds a secure in-memory cache for SSE-KMS encryption keys retrieved from Barbican
+      (or other KMS backends), eliminating redundant round-trips on repeated access to the same encrypted
+      objects. Uses a new SIEVE-based eviction cache (WebCache) and stores decrypted secrets in the Linux
+      kernel keyring.
+
+      Please refer to the Ceph documentation on how to configure this feature.'
+  risk:
+    blast: data-loss
+    conflict: substantive
+    coverage: partial
+    upstream: merged-main
+    total: 9
+    band: medium
+  risk_notes: "- TTLs mean that a deleted or rotated Barbican key won't be immediately reflected.\n- New\
+    \ async primitives (async::call_once) and the WebCache are\n  significant new library code shipping\
+    \ for the first time.\n- Cache size tuning and system wide keyring quota adjustment needed\n  for\
+    \ production workloads (refer to the docs)."
+  behavior_change: 'Repeated SSE-KMS access no longer hits the KMS backend on every
+
+    request; decrypted secrets are cached in-memory and in the Linux
+
+    kernel keyring. KMS-cache is ON out of the box.'
+  upgrade_notes: 'Feature flag: rgw_crypt_s3_kms_cache_enabled. Set false to disable
+
+    caching entirely and revert to per-request KMS lookups.'
+  derived:
+    patch_status: active
+    merge_commit: 23af29e8edafd4f9e322fc2190b00a1d4c4d7aac
+    commits:
+    - c3d6b5e84996520cdbe99d92d13c01970788dd70
+    - 31fe1788ac73e916b55785055d9b1ddfdf552d24
+    - ffaa00320b8fe6bf098335bc2255875afa0e7948
+    - 3278b662906c08f46b8882c60fd65ac99a408173
+    - 385831b4dce91b10da7c87812d8c1ef98b6dc73d
+    - 20f3ced6708fc42a5a0620aa3f9955fc36e0b71c
+    - f79d21d9c6aec030ad0959b6b367211dc5a8aad4
+    - b2aaed222816e9fb18c2b85c8acb0363ae67ac53
+    - 3aa68bc13304fee96dff58e7768d095fe3f6c907
+    - 23c05cc48431a95af20e8b047a25e882db52a6c3
+    - 352a8fa4081774c5ec59b590b9717875db80e229
+    - 6d274aab521c75e4aadd6e153a065302e2b43b79
+    - 13edd1d5f3609f1e1ae4723228c161d3c2f65b40
+    - dc805661b1729201e886b21de642e12cb671bf3c
+    - 337e6a1d1774e9abc32dd0d3183bd6a9ba074e4f
+    - 46558aa89448f05c2cfb1080df937c8e78be3c1f
+    - 215576c61ca3ca83f4cfa692674c4994d8354a34
+    - 09f4adebea78ece40a96b2d24eaceb1283c2b823
+    - 784dc15aa03be12f900bf9340ef2ed7b85d42ffc
+    - 533fb699f4af11effeab8c0ab912ea82e6ce40fa
+    - 2175ae70664a522288fd6788aa5dc1b9b7b587f6
+    - 7767a8f807f46c0faba5c7e184eea9271bfd1f33
+    - 72d11787236b852de9cdc1e75a10c44688a2cccd
+- id: 01a14449-fa55-75f8-a119-93a83c111aec
+  title: Fix Swift ACL evaluation for Glance image sharing
+  component: rgw
+  category: fix
+  provenance:
+    type: upstream_pr
+    upstream_prs:
+    - https://github.com/ceph/ceph/pull/68795
+    - https://github.com/ceph/ceph/pull/70997
+    upstream_pr_state: open-in-review
+    upstream_commits:
+    - 0a96b7d44d90126a656575e53629565fcdd9d58b
+    - 68d8b416a6a6618be9799955673cb0c0722b18c5
+    upstream_trackers:
+    - https://tracker.ceph.com/issues/68492
+    - https://tracker.ceph.com/issues/68476
+    previous_backport: 01a08f3a-594a-74c8-a6e7-11286099fb49
+  justification:
+    type: customer
+    refs:
+    - cobaltcore-dev/cloud-storage#618
+    - cobaltcore-dev/cloud-storage#477
+    public_summary: Fix Swift ACL evaluation with Keystone so Glance images stored in a multi-tenant Swift
+      backend can be shared across projects. Without this fix, accepted shared images are visible to destination
+      projects, but downloading them returns an empty file and fails checksum validation.
+  risk:
+    blast: availability
+    conflict: trivial
+    coverage: partial
+    upstream: open-in-review
+    total: 9
+    band: medium
+  risk_notes: 'There is no runtime configuration toggle for this behavior. To disable it after rollout,
+    roll back to the previous RGW package/build and restart or roll the RGW daemons. As an immediate mitigation,
+    remove or restrict the affected Swift cross-project or wildcard ACL entries; a package rollback requires
+    no data migration or ACL rewrite.
+
+    Authorization behavior is affected, but only for Keystone-authenticated RGW requests using Swift/S3
+    ACL interoperability. The backport is clean with no data structure change and includes focused unit
+    coverage plus validation in a Swift/Glance environment.'
+  behavior_change: Authenticated Keystone users can now access containers granted through *:*. S3 requests
+    authenticated through Keystone also honor Swift-style project:user and wildcard ACL entries. Bare
+    role-name ACLs remain intentionally unsupported.
+  upgrade_notes: No configuration, data migration, restart sequencing, or ACL rewrite is needed. Deploy
+    the updated RGW packages and restart/roll the RGW daemons according to the normal upgrade procedure.
+    Existing ACLs take effect automatically.
+  derived:
+    patch_status: active
+    merge_commit: e34318455006042943d0304f7bda244b8c0cf0bc
+    commits:
+    - c3de36db5e48f183b16b6b446c5f2ca89933ffd1
+    - 1f1d09a6ab62836376ee2a3b4ad01f20c6fa3adb
+    - 291b5ded98c4410f0678e5350cb8463e91892d32
+- id: 01a14457-8152-7959-bc90-fa067d6a5230
+  title: Add Keystone scope information to ops logging -> audit logs
+  component: rgw
+  category: feature
+  provenance:
+    type: upstream_pr
+    upstream_prs:
+    - https://github.com/ceph/ceph/pull/66111
+    - https://github.com/ceph/ceph/pull/68627
+    upstream_pr_state: merged-main
+    upstream_commits:
+    - 5d6d51eb55648b2c8c563534de4837c90edad78e
+    - d2588160f1416db5935047414b621db3baefd6a6
+    upstream_trackers:
+    - https://tracker.ceph.com/issues/73702
+    - https://tracker.ceph.com/issues/76067
+    previous_backport: 019eb0c0-4142-7fc8-9332-370dc54e89c9
+  justification:
+    type: customer
+    refs:
+    - cobaltcore-dev/cloud-storage#619
+    - cobaltcore-dev/cloud-storage#335
+    public_summary: 'Add OpenStack Keystone authentication scope information to RGW operations logs.
+
+      It enables audit trails for multi-tenant and compliance-sensitive environments, by adding the keystone_scope
+      field (project, user, domain, roles, application credentials) to RGW ops logs.'
+  risk:
+    blast: availability
+    conflict: trivial
+    coverage: partial
+    upstream: merged-main
+    total: 7
+    band: medium
+  risk_notes: 'Scope logging with `rgw_keystone_scope_include_user=true` writes
+
+    human-readable usernames to ops logs, which may have GDPR / privacy
+
+    implications.'
+  behavior_change: 'Keystone scope (project, domain, roles) appears in RGW ops logs. This
+
+    feature is OFF by default.'
+  upgrade_notes: '- `rgw_keystone_scope_enabled` - enable Keystone scope in the ops log'
+  derived:
+    patch_status: active
+    merge_commit: 4a25e29fde54fc4aaee83e88ae493c403cff770a
+    commits:
+    - 176d7eab96a81353494d104185123e80eef11119
+    - f135636c6b6a0c38324d57991e8cee2ca2a1cb67
+    - e019cef09007337a27688565c9d40fa6e09895b2
+    - c280af09844c46a2d639e5873ebcaaa1a9262d20
+- id: 01a14463-7538-78b6-84eb-94e4df488626
+  title: rate limit "retry after" header
+  component: rgw
+  category: feature
+  provenance:
+    type: upstream_pr
+    upstream_prs:
+    - https://github.com/ceph/ceph/pull/68210
+    upstream_pr_state: merged-main
+    upstream_commits:
+    - 3dae903c9a31fe5161058a4bb1cfe4092839eb29
+    upstream_trackers:
+    - https://tracker.ceph.com/issues/64083
+    - https://tracker.ceph.com/issues/67655
+    previous_backport: 01a0fca1-b10e-7c21-97cc-f83d8a61565c
+  justification:
+    type: customer
+    refs:
+    - cobaltcore-dev/cloud-storage#620
+    - todo
+    public_summary: customer request
+  risk:
+    blast: availability
+    conflict: substantive
+    coverage: partial
+    upstream: merged-main
+    total: 8
+    band: medium
+  risk_notes: "**blast: availability.** The commit adds more than just a new header. The\ncommit also\
+    \ rewrites the accept/reject decision. It runs for every request of\na user or bucket with rate limiting\
+    \ enabled. A bug here means requests are \nwrongly rejected, or wrongly let through and the cluster\
+    \ loses the protection \nthe limit is meant to give. Nothing is written to disk, so no data is at\
+    \ risk.\nClusters without rate limiting are unaffected.\n\n**conflict: substantive.** The cherry-pick\
+    \ without its two parents (91e9f00,\ndae572d) raised some conflicts documented as part of the commit\
+    \ message.\nThe most important one, unlike `main`, the config option\n`rgw_ratelimit_interval` does\
+    \ not exist on this branch and was replaced\nby `RateLimiterEntry::ratelimit_interval_seconds = 60`.\
+    \ That constant matches\nthe default value.\n\n**coverage: partial.** The new `compute_delay()` helper\
+    \ has a dedicated unit\ntest. All 22 pre-existing ratelimit tests were converted from `bool` to \n\
+    `int64_t`.\nNot covered: the header itself in the response."
+  behavior_change: 'S3 responses rejected with `503 ERR_RATE_LIMITED` now carry a `Retry-After`
+
+    header with the estimated number of seconds until the caller can make a rquest
+
+    again.'
+  upgrade_notes: "The header is additive and appears only on rejected requests.\n\nUnlike `main`, the\
+    \ interval of the time to wait until the next request will be\naccepted, is not configurable. It is\
+    \ fixed at 60s (`rgw_ratelimit_interval`). \nThe config option has beenm added as part of dae572d,\
+    \ which is not part of this\nbackport."
+  derived:
+    patch_status: active
+    merge_commit: 6c4302a47cf495407413efe6e603134e3446a01b
+    commits:
+    - 1b2031baa1f5f3e9e60a34e8164070a2f0b51944
+    - 85da87604e2690a4cfa7111cd58c670043230732
+- id: 01a14470-67b2-7d4c-991a-eab24455b4b6
+  title: Prevent rate limit credit going negative
+  component: rgw
+  category: fix
+  provenance:
+    type: upstream_pr
+    upstream_prs:
+    - https://github.com/ceph/ceph/pull/66509
+    upstream_pr_state: merged-main
+    upstream_commits:
+    - 91e9f00a7543c4651a983c2d785696a069d8ab28
+    upstream_trackers:
+    - https://tracker.ceph.com/issues/74088
+    previous_backport: 01a134b3-2aac-7c51-bf7f-dcb3cb6babbc
+  justification:
+    type: engineering
+    refs:
+    - cobaltcore-dev/cloud-storage#621
+    - todo
+    - '```'
+    - https://github.com/ceph/ceph/commit/91e9f00a7543c4651a983c2d785696a069d8ab28
+    - '- https://github.com/ceph/ceph/pull/66509'
+    - cobaltcore-dev/cloud-storage/#585
+    public_summary: Bugfix. Especially in combination with https://github.com/ceph/ceph/pull/68210.
+  risk:
+    blast: availability
+    conflict: trivial
+    coverage: partial
+    upstream: merged-main
+    total: 7
+    band: medium
+  risk_notes: '**blast: availability**: the code runs on every request that rate limiting
+
+    applies to. But by the time it runs, the decision to accept or refuse the
+
+    request has already been made. Nothing changes for anyone who has a real limit
+
+    configured. The only case that behaves differently is a limit set to 0, meaning
+
+    unlimited. If this went wrong, the effect would be users getting through more
+
+    or fewer requests than their quota allows. That is recoverable and no data is
+
+    at risk, which is why it is availability rather than data-loss.
+
+
+    **conflict: trivial**: the patch did not apply cleanly. But the resolution was
+
+    trivial. Upstream is written on top of dae572d (LIST & DELETE rate limits),
+
+    which this release does not have. So the list and delete related parts were
+
+    dropped. What remains is the two read and write guards, plus the two matching
+
+    tests adapted to this branch''s constructor, call signature and int64_t return.
+
+
+    **coverage: partial**: two unit tests added and adapted to this branch. One for
+
+    read, one for write. No integration-level test exercises the situation where
+
+    a gateway is enabled with 0 and gets later a limit assigned.'
+  behavior_change: 'The op counter can no longer go negative, so a user or bucket running with a
+
+    limit of 0 ("unlimited") no longer builds up hidden (negative) debt. Setting a
+
+    real limit later now takes effect immediately instead of refusing requests
+
+    until the debt is repaid. Together with the Retry-After backport, this also
+
+    bounds the Retry-After value, which is derived from the deficit.'
+  upgrade_notes: 'None. Counters live only in RGW process memory, so any accumulated debt is
+
+    discarded when the daemon restarts during the upgrade.'
+  derived:
+    patch_status: active
+    merge_commit: f973198f60978409e323f963efb2dc95892fad8c
+    commits:
+    - 390ba97e3175ed73653a6d176503bab1155ce002
+    - 05af3e61ccb52d3681207e0b44505decd2562e2c
+- id: 01a16e5e-c411-772f-92ec-4f24f4a67533
+  title: upgrade nvmeof container image version to fix gateway startup
+  component: other
+  category: fix
+  provenance:
+    type: other
+    other: 'Downstream image bump, no upstream PR. ceph-nvmeof published 1.4.29 on 2026-10-22 (https://github.com/ceph/ceph-nvmeof/releases/tag/1.4.29),
+      the first squid-line gateway image built on a ceph that knows aes256k: https://github.com/ceph/ceph-nvmeof/pull/2230
+      moved CEPH_VERSION in .env from 19.2.6 to 19.2.7, and that one variable also drives the librados
+      built into the image. Requested in ceph/ceph-nvmeof#2203. Upstream ceph still has no PR moving squid''s
+      DEFAULT_NVMEOF_IMAGE off 1.2.5.'
+    previous_backport: 01a15d41-e5b1-7d20-b6e3-e9ebcec19b81
+    upstream_trackers:
+    - https://tracker.ceph.com/issues/81778
+  justification:
+    type: engineering
+    refs:
+    - cobaltcore-dev/cloud-storage#625
+    - https://tracker.ceph.com/issues/81778
+    public_summary: 'Since 19.2.6, cephadm creates daemon cephx keys with the `aes256k` key type.
+
+      The NVMe-oF gateway image shipped as the default, `quay.io/ceph/nvmeof:1.2.5`,
+
+      bundles a librados built from ceph 19.0.0, from before `aes256k` existed, so
+
+      the gateway cannot authenticate with the key cephadm gives it. It fails to
+
+      connect to the cluster and restarts, and the nvmeof service never reaches its
+
+      target count.
+
+
+      `quay.io/ceph/nvmeof:1.4.29` is built on ceph 19.2.7 and uses that key without
+
+      help, so the gateway works with the keys cephadm already creates.
+
+
+      The upgrade was needed to validate this release: with 1.2.5 the nvmeof
+
+      gateway never starts, so the teuthology jobs that deploy an nvmeof service
+
+      cannot bring the test environment up. With 1.4.29 those jobs deploy and pass.
+      '
+  risk:
+    blast: availability
+    conflict: substantive
+    coverage: partial
+    upstream: downstream-only
+    total: 10
+    band: high
+  risk_notes: "- **blast: availability**: the change is the value of `DEFAULT_NVMEOF_IMAGE`\n  plus the\
+    \ revert of the previous backport, which removes cephadm's\n  nvmeof-specific key handling and leaves\
+    \ those files identical to upstream\n  squid. A wrong image means gateways do not start, which is\
+    \ the failure this\n  fixes. No data path is touched and no on-disk format changes, so nothing can\n\
+    \  be silently corrupted. Clusters with no nvmeof service are unaffected.\n- **conflict: substantive**:\
+    \ fully custom downstream change, not a cherry-pick,\n  so it carries no upstream review (rubric:\
+    \ \"... OR fully custom\"). The diff is\n  the revert of the previous backport plus three constants\
+    \ and a template\n  comment, and will carry forward mechanically until upstream squid bumps its\n\
+    \  own default.\n- **coverage: partial**: integration coverage only, no unit test for an image\n \
+    \ constant. `smoke-roleless` exercises gateway startup with the shipped image\n  on centos and ubuntu.\
+    \ Not covered: end-to-end I/O on the shipped image,\n  because `qa/suites/rbd/nvmeof` pins `version:\
+    \ latest` and therefore tests a\n  main-line gateway rather than this one.\n- 1.2.5 to 1.4.29 is a\
+    \ two-minor-version jump in the gateway itself, not only\n  a librados rebuild, so gateway behaviour\
+    \ beyond startup rests on upstream's\n  testing of the 1.4 line. Checked ahead of the jump: the rendered\n\
+    \  `ceph-nvmeof.conf` keeps the same six sections and every setting 1.4.29 reads\n  without a default\
+    \ is emitted by the template. The gRPC surface is additive\n  (25 RPCs to 32, none removed). And the\
+    \ container surface squid's cephadm\n  provides is what 1.4.x expects, with every addition in tentacle's\
+    \ version\n  gated on config-json keys squid never sets. Under 1.4.x the presence of\n  `bdevs_per_cluster`\
+    \ in the gateway config is what selects how the gateway\n  groups its RADOS connections, not just\
+    \ how many, so the line can no longer\n  be removed as a redundant tunable. The template now carries\
+    \ a comment saying\n  so."
+  behavior_change: 'The default NVMe-oF gateway image moves from `quay.io/ceph/nvmeof:1.2.5` to
+
+    `quay.io/ceph/nvmeof:1.4.29`, in the mgr module, in the cephadm binary
+
+    constants (which still named 1.2.1) and in the example listing in the
+
+    monitoring docs. Clusters that pin `mgr/cephadm/container_image_nvmeof` keep
+
+    their pinned image. If that image predates `aes256k` they stay broken until
+
+    they move the pin.'
+  upgrade_notes: 'Clusters without an NVMe-oF service: nothing to do.
+
+
+    An nvmeof service already stuck from a 19.2.6 or later deploy does not pick up
+
+    the new image on its own. Redeploy it once after the upgrade:
+
+
+    ```
+
+    ceph orch redeploy nvmeof.<service>
+
+    ```
+
+
+    The gateway is recreated from 1.4.29 and starts with the key it already has.
+
+    No cephx surgery is needed.'
+  derived:
+    patch_status: active
+    merge_commit: 68da157cc2d8b47409d2911b8c9c70d9c6eb1d39
+    commits:
+    - 5b0182d22a75b4e405ff44b710bc89076b40fc4b
+    - 71f09ba69ff74871c0c9a0672aaa7a1962faffb0
+    - cfda5f3afcd6060086817100734b91f3d09667eb
